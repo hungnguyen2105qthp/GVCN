@@ -1,0 +1,165 @@
+const encoder = new TextEncoder();
+
+function json(response, status, body) {
+  response.status(status).json(body);
+}
+
+function supabaseHeaders(key, extra = {}) {
+  return {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
+async function readJson(response) {
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function handleCreate(config, body, classId) {
+  const username = String(body.username || "").trim().toLowerCase();
+  const password = String(body.password || "");
+  const role = body.role === "bcs" ? "bcs" : body.role === "hocsinh" ? "hocsinh" : "";
+  const studentId = String(body.studentId || "").trim();
+
+  if (!/^[a-z0-9._-]{2,64}$/.test(username) || password.length < 6 || !role || !studentId) {
+    throw new Error("Tài khoản, mật khẩu từ 6 ký tự, vai trò và học sinh liên kết là bắt buộc.");
+  }
+
+  const localPart = Array.from(encoder.encode(username.toLowerCase()), byte =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  const email = `u.${localPart}@accounts.example.com`;
+  const createResponse = await fetch(`${config.url}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: supabaseHeaders(config.serviceKey),
+    body: JSON.stringify({ email, password, email_confirm: true }),
+  });
+  const user = await readJson(createResponse);
+  if (!createResponse.ok) throw new Error(user && user.msg ? user.msg : "Không thể tạo tài khoản xác thực.");
+
+  const profileResponse = await fetch(`${config.url}/rest/v1/profiles`, {
+    method: "POST",
+    headers: supabaseHeaders(config.serviceKey, { Prefer: "return=minimal" }),
+    body: JSON.stringify({
+      id: user.id,
+      username,
+      full_name: String(body.fullName || username).trim(),
+      role,
+      student_id: studentId,
+      class_id: classId,
+    }),
+  });
+  if (!profileResponse.ok) {
+    await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+      method: "DELETE",
+      headers: supabaseHeaders(config.serviceKey),
+    });
+    const error = await readJson(profileResponse);
+    throw new Error(error && error.message ? error.message : "Không thể lưu hồ sơ tài khoản.");
+  }
+
+  return { id: user.id, username, fullName: String(body.fullName || username).trim(), role, studentId };
+}
+
+module.exports = async function handler(request, response) {
+  response.setHeader("Cache-Control", "no-store");
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    json(response, 405, { error: "Phương thức không được hỗ trợ." });
+    return;
+  }
+
+  const { SUPABASE_URL: url, SUPABASE_ANON_KEY: anonKey, SUPABASE_SERVICE_ROLE_KEY: serviceKey } = process.env;
+  if (!url || !anonKey || !serviceKey) {
+    json(response, 503, { error: "Thiếu cấu hình Supabase phía máy chủ." });
+    return;
+  }
+
+  const token = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!token) {
+    json(response, 401, { error: "Cần đăng nhập để thực hiện thao tác này." });
+    return;
+  }
+
+  try {
+    const authResponse = await fetch(`${url}/auth/v1/user`, {
+      headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
+    });
+    const authUser = await readJson(authResponse);
+    if (!authResponse.ok || !authUser || !authUser.id) {
+      json(response, 401, { error: "Phiên đăng nhập không hợp lệ." });
+      return;
+    }
+
+    const profileResponse = await fetch(
+      `${url}/rest/v1/profiles?id=eq.${encodeURIComponent(authUser.id)}&select=role,class_id`,
+      { headers: supabaseHeaders(serviceKey) }
+    );
+    const profiles = await readJson(profileResponse);
+    if (!profileResponse.ok) throw new Error("Không thể xác minh quyền tài khoản.");
+    const actor = Array.isArray(profiles) ? profiles[0] : null;
+    if (!actor || actor.role !== "gvcn") {
+      json(response, 403, { error: "Chỉ GVCN mới được quản lý tài khoản." });
+      return;
+    }
+
+    const body = request.body || {};
+    const action = body.action || "create";
+    if (action === "create") {
+      const account = await handleCreate({ url, serviceKey }, body, actor.class_id);
+      json(response, 201, { account });
+      return;
+    }
+
+    const userId = String(body.userId || "");
+    if (!userId || userId === authUser.id) {
+      json(response, 400, { error: "Tài khoản mục tiêu không hợp lệ." });
+      return;
+    }
+    const targetResponse = await fetch(
+      `${url}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id,role,class_id`,
+      { headers: supabaseHeaders(serviceKey) }
+    );
+    const targets = await readJson(targetResponse);
+    const target = Array.isArray(targets) ? targets[0] : null;
+    if (!targetResponse.ok) throw new Error("Không thể xác minh tài khoản mục tiêu.");
+    if (!target || target.class_id !== actor.class_id || target.role === "gvcn") {
+      json(response, 403, { error: "Không được quản lý tài khoản này." });
+      return;
+    }
+
+    if (action === "password") {
+      const password = String(body.password || "");
+      if (password.length < 6) throw new Error("Mật khẩu mới phải có ít nhất 6 ký tự.");
+      const updateResponse = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+        method: "PUT",
+        headers: supabaseHeaders(serviceKey),
+        body: JSON.stringify({ password }),
+      });
+      const result = await readJson(updateResponse);
+      if (!updateResponse.ok) throw new Error(result && result.msg ? result.msg : "Không thể đổi mật khẩu.");
+      json(response, 200, { ok: true });
+      return;
+    }
+
+    if (action === "delete") {
+      const deleteResponse = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+        method: "DELETE",
+        headers: supabaseHeaders(serviceKey),
+      });
+      if (!deleteResponse.ok) {
+        const result = await readJson(deleteResponse);
+        throw new Error(result && result.msg ? result.msg : "Không thể xóa tài khoản.");
+      }
+      json(response, 200, { ok: true });
+      return;
+    }
+
+    json(response, 400, { error: "Thao tác không hợp lệ." });
+  } catch (error) {
+    json(response, 400, { error: error.message || "Yêu cầu không hợp lệ." });
+  }
+};
