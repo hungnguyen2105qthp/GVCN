@@ -1,4 +1,4 @@
-# Quản lý học sinh | Thanh Xuân 12C1
+# Thanh Xuân 12C1
 
 ## Deploy to Vercel with Supabase
 
