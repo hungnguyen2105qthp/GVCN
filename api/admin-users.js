@@ -76,7 +76,13 @@ module.exports = async function handler(request, response) {
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
   if (!url || !anonKey || !serviceKey) {
-    json(response, 503, { error: "Thiếu cấu hình Supabase phía máy chủ." });
+    const missing = [];
+    if (!url) missing.push("SUPABASE_URL (hoặc VITE_SUPABASE_URL)");
+    if (!anonKey) missing.push("SUPABASE_ANON_KEY (hoặc VITE_SUPABASE_PUBLISHABLE_KEY)");
+    if (!serviceKey) missing.push("SUPABASE_SERVICE_ROLE_KEY (hoặc SUPABASE_SECRET_KEY)");
+    json(response, 503, {
+      error: `Thiếu cấu hình server: ${missing.join(", ")}. Thêm trong Vercel → Settings → Environment Variables rồi redeploy.`,
+    });
     return;
   }
 

@@ -440,7 +440,7 @@
       ${cells}
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">
         ${isTeacher()
-          ? `<div class="flex flex-col items-center gap-1"><span>${escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"}</span><label class="flex cursor-pointer items-center gap-1 text-[10px] font-bold text-slate-500"><input type="checkbox" ${row.average_visible === true ? "checked" : ""} aria-label="Hiện điểm trung bình với ${escapeHtmlText(student.name)}" onchange="saveGradeVisibility(this.dataset.studentId,this.checked)" data-student-id="${escapeHtmlText(student.id)}" class="accent-teal-700">Hiện với học sinh</label></div>`
+          ? `<div class="flex min-w-24 flex-col items-center gap-2"><span class="text-base">${escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"}</span><label class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border ${row.average_visible === true ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-500"} px-2 py-1 text-[10px] font-bold transition hover:border-emerald-300"><input type="checkbox" ${row.average_visible === true ? "checked" : ""} aria-label="Hiện điểm trung bình với ${escapeHtmlText(student.name)}" onchange="saveGradeVisibility(this.dataset.studentId,this.checked)" data-student-id="${escapeHtmlText(student.id)}" class="peer sr-only"><span class="flex h-3.5 w-3.5 items-center justify-center rounded-full border ${row.average_visible === true ? "border-emerald-600 bg-emerald-600" : "border-slate-300 bg-white"} text-[9px] text-white">${row.average_visible === true ? "✓" : ""}</span><span>${row.average_visible === true ? "Đã hiện" : "Hiện với HS"}</span></label></div>`
           : row.average_visible === true
             ? escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"
             : `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`}
@@ -475,6 +475,9 @@
         ...subjects,
         ...(state.gradeRows || []).map(row => row.subject).filter(Boolean),
       ])];
+    const allAveragesVisible = students.length > 0 && students.every(student =>
+      gradeFor(student.id, context).average_visible === true
+    );
     const renderTable = (subject) => {
       const subjectContext = { ...context, subject };
       return `<div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -500,6 +503,13 @@
             </tbody>
           </table>
         </div>
+        ${isTeacher() ? `<div class="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div><div class="text-sm font-black text-slate-800">Công bố ĐTBmhk môn ${escapeHtmlText(subject)} cho cả lớp</div><p class="mt-1 text-xs text-slate-500">Có thể bật/tắt riêng từng học sinh ngay trong cột điểm trung bình.</p></div>
+          <label class="inline-flex w-fit cursor-pointer items-center gap-2 rounded-full border ${allAveragesVisible ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-white text-slate-600"} px-4 py-2.5 text-xs font-black shadow-sm transition hover:border-emerald-300">
+            <input id="grade-visibility-all" type="checkbox" ${allAveragesVisible ? "checked" : ""} ${state.gradeVisibilitySaving ? "disabled" : ""} onchange="setGradeVisibilityForClass(this.checked)" class="h-4 w-4 accent-emerald-600">
+            ${state.gradeVisibilitySaving ? "Đang cập nhật…" : allAveragesVisible ? "Đang hiện với cả lớp" : "Hiện ĐTBmhk cả lớp"}
+          </label>
+        </div>` : ""}
         <div class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">Điểm trung bình hiển thị theo file nếu có; nếu không, hệ thống tính theo trọng số từ các điểm thành phần.</div>
       </div>`;
     };
@@ -600,6 +610,44 @@
             ...context,
             average_visible: Boolean(visible),
             updated_at: new Date().toISOString(),
+          };
+
+          window.setGradeVisibilityForClass = async function (visible) {
+            if (!isTeacher()) {
+              showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
+              await window.loadGrades();
+              renderLayout();
+              return;
+            }
+            if (state.gradeVisibilitySaving) return;
+            state.gradeVisibilitySaving = true;
+            renderLayout();
+            try {
+              const context = selectedContext();
+              const records = (state.students || []).map(student => {
+                const existing = gradeFor(student.id, context);
+                const record = {
+                  ...existing,
+                  class_id: state.cloudProfile.class_id,
+                  student_id: String(student.id),
+                  ...context,
+                  average_visible: Boolean(visible),
+                  updated_at: new Date().toISOString(),
+                };
+                delete record.id;
+                return record;
+              });
+              if (records.length) await upsertGradeRecords(await window.cloudReady, records);
+              await window.loadGrades();
+              showToast(visible ? "Đã công bố ĐTBmhk cho cả lớp." : "Đã ẩn ĐTBmhk với cả lớp.", "success");
+            } catch (error) {
+              console.error("Không thể cập nhật quyền xem điểm trung bình của cả lớp:", error);
+              showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem ĐTBmhk. Hãy kiểm tra cấu hình database."), "error");
+              await window.loadGrades();
+            } finally {
+              state.gradeVisibilitySaving = false;
+              renderLayout();
+            }
           };
           delete record.id;
           await upsertGradeRecords(await window.cloudReady, [record]);
