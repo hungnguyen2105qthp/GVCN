@@ -5,12 +5,13 @@ function json(response, status, body) {
 }
 
 function supabaseHeaders(key, extra = {}) {
-  return {
+  const headers = {
     apikey: key,
-    Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     ...extra,
   };
+  if (key.startsWith("eyJ")) headers.Authorization = `Bearer ${key}`;
+  return headers;
 }
 
 async function readJson(response) {
@@ -74,7 +75,7 @@ module.exports = async function handler(request, response) {
 
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+  const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !anonKey || !serviceKey) {
     const missing = [];
     if (!url) missing.push("SUPABASE_URL (hoặc VITE_SUPABASE_URL)");

@@ -24,7 +24,7 @@ Import this repository into Vercel and add these Environment Variables to the de
 
 - `SUPABASE_URL`: Project URL from Supabase **Settings → API**.
 - `SUPABASE_ANON_KEY`: Supabase publishable/anon key. You can instead set `VITE_SUPABASE_PUBLISHABLE_KEY`.
-- `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`: server-only service-role/secret key. Used by `/api/admin-users` and `/api/reminders` for privileged operations.
+- `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`: server-only secret/service-role key from the same Supabase project as `SUPABASE_URL`. Used by `/api/admin-users` and `/api/reminders` for privileged operations. New `sb_secret_...` keys are sent only in the `apikey` header; legacy JWT `service_role` keys are also supported.
 
 In Vercel, open **Project → Settings → Environment Variables**, add the variables for the environments you deploy (Production/Preview/Development), then redeploy the latest deployment. `/api/config` exposes only the public URL and publishable/anon key; the service-role key stays in the Vercel function environment. Do not add a service-role or secret key to any `VITE_` variable or browser code. If a reminder or account action reports missing server configuration, check that the service-role key is set and redeploy; the error lists any missing variable names without exposing their values.
 For local Vercel development, copy `.env.example` to `.env.local` and fill it in; never commit the populated file.
@@ -33,6 +33,7 @@ After signing in as GVCN, use **Đổi banner** on the top banner to upload a wi
 ### 3. Create accounts and recover saved data
 
 - Sign in as GVCN using the Supabase Auth user created above.
+- Student records are stored in the `state` JSON column of the matching `public.class_data` row (under `state.students`), not in a separate `students` table. In Supabase Table Editor, open `class_data`, find the row whose `class_id` matches the GVCN profile, and inspect `state`. If the row is missing, import the old browser backup while signed in as GVCN; if the row exists but is stale, verify that Vercel's URL and publishable/secret keys all belong to this same Supabase project.
 - Before the first GVCN sign-in, use **Tải dữ liệu cũ** on the old browser/origin to export its backup, then **Chọn tệp backup JSON** on the deployed page. The first GVCN sign-in copies that `classManagerData` and eligible student/BCS accounts into the class database if there is no class row yet. A backup can be explicitly confirmed to replace an existing class row. Accounts with passwords shorter than six characters are not imported and must be recreated. Browser storage from another browser/device or origin cannot be read by Vercel without this export/import step.
 - New student/BCS accounts can be created from **Cài đặt → Quản lý tài khoản**. Use passwords of at least six characters.
 - Each student/BCS profile is linked to one existing student ID. Only GVCN should create or link accounts.

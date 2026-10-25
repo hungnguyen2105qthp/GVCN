@@ -3,12 +3,13 @@ function json(response, status, body) {
 }
 
 function supabaseHeaders(key, extra = {}) {
-  return {
+  const headers = {
     apikey: key,
-    Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     ...extra,
   };
+  if (key.startsWith("eyJ")) headers.Authorization = `Bearer ${key}`;
+  return headers;
 }
 
 async function readJson(response) {
@@ -26,7 +27,7 @@ module.exports = async function handler(request, response) {
 
   const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+  const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!rawUrl || !anonKey || !serviceKey) {
     const missing = [];
     if (!rawUrl) missing.push("SUPABASE_URL (hoặc VITE_SUPABASE_URL)");
@@ -61,7 +62,13 @@ module.exports = async function handler(request, response) {
     const profileResponse = await fetch(profileUrl, { headers: supabaseHeaders(serviceKey) });
     const profiles = await readJson(profileResponse);
     const profile = Array.isArray(profiles) ? profiles[0] : null;
-    if (!profileResponse.ok) throw new Error("Không thể xác minh tài khoản gửi lời nhắc.");
+    if (!profileResponse.ok) {
+      const code = profiles && profiles.code ? `, mã ${profiles.code}` : "";
+      const detail = profiles && profiles.message ? ` ${profiles.message}` : "";
+      throw new Error(
+        `Không thể xác minh tài khoản gửi lời nhắc (Supabase HTTP ${profileResponse.status}${code}).${detail}`
+      );
+    }
     if (!profile) {
       json(response, 403, { error: "Tài khoản chưa có hồ sơ trong lớp." });
       return;
