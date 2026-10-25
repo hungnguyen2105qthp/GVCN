@@ -28,6 +28,7 @@ Import this repository into Vercel and add these Environment Variables to the de
 
 In Vercel, open **Project → Settings → Environment Variables**, add the variables for the environments you deploy (Production/Preview/Development), then redeploy the latest deployment. `/api/config` exposes only the public URL and publishable/anon key; the service-role key stays in the Vercel function environment. Do not add a service-role or secret key to any `VITE_` variable or browser code. If a reminder or account action reports missing server configuration, check that the service-role key is set and redeploy; the error lists any missing variable names without exposing their values.
 For local Vercel development, copy `.env.example` to `.env.local` and fill it in; never commit the populated file.
+If account management or reminders return `permission denied for table profiles`, run [`supabase/fix-service-role-grants.sql`](./supabase/fix-service-role-grants.sql) in the Supabase SQL Editor, then redeploy/retry. The main `schema.sql` also grants the required table privileges for new or rebuilt projects.
 After signing in as GVCN, use **Đổi banner** on the top banner to upload a wide image from your computer. The image is compressed and saved with the class data.
 
 ### 3. Create accounts and recover saved data

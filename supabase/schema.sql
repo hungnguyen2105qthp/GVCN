@@ -188,6 +188,7 @@ alter table public.grades enable row level security;
 alter table public.class_reminders enable row level security;
 alter table public.attendance_records enable row level security;
 revoke all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.attendance_records from public, anon, authenticated;
+grant all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.attendance_records to service_role;
 
 drop policy if exists "profiles_read_own_or_teacher" on public.profiles;
 create policy "profiles_read_own_or_teacher"
