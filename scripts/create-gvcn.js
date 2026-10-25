@@ -98,7 +98,7 @@ async function main() {
   const classId = await promptLine("Mã lớp", "12C1");
   if (!classId) throw new Error("Mã lớp không được để trống.");
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY ||
     await promptSecret("Nhập Supabase service_role/secret key");
   if (!serviceKey) throw new Error("Service-role key không được để trống.");
   const password = await promptSecret("Tạo mật khẩu GVCN (ít nhất 6 ký tự)");
@@ -111,9 +111,9 @@ async function main() {
   const email = `u.${localPart}@accounts.example.com`;
   const headers = {
     apikey: serviceKey,
-    Authorization: `Bearer ${serviceKey}`,
     "Content-Type": "application/json",
   };
+  if (serviceKey.startsWith("eyJ")) headers.Authorization = `Bearer ${serviceKey}`;
 
   const { response: createResponse, body: user } = await requestJson(`${projectUrl}/auth/v1/admin/users`, {
     method: "POST",

@@ -19,6 +19,16 @@ async function readJson(response) {
   return text ? JSON.parse(text) : null;
 }
 
+function supabaseErrorMessage(body, fallback) {
+  return body && (body.msg || body.message || body.error_description || body.error) || fallback;
+}
+
+function supabaseRequestError(response, body, fallback) {
+  const code = body && body.code ? `, mã ${body.code}` : "";
+  const detail = supabaseErrorMessage(body, fallback);
+  return new Error(`Supabase HTTP ${response.status}${code}: ${detail}`);
+}
+
 async function handleCreate(config, body, classId) {
   const username = String(body.username || "").trim().toLowerCase();
   const password = String(body.password || "");
@@ -39,7 +49,7 @@ async function handleCreate(config, body, classId) {
     body: JSON.stringify({ email, password, email_confirm: true }),
   });
   const user = await readJson(createResponse);
-  if (!createResponse.ok) throw new Error(user && user.msg ? user.msg : "Không thể tạo tài khoản xác thực.");
+  if (!createResponse.ok) throw supabaseRequestError(createResponse, user, "Không thể tạo tài khoản xác thực.");
 
   const profileResponse = await fetch(`${config.url}/rest/v1/profiles`, {
     method: "POST",
@@ -59,7 +69,7 @@ async function handleCreate(config, body, classId) {
       headers: supabaseHeaders(config.serviceKey),
     });
     const error = await readJson(profileResponse);
-    throw new Error(error && error.message ? error.message : "Không thể lưu hồ sơ tài khoản.");
+    throw supabaseRequestError(profileResponse, error, "Không thể lưu hồ sơ tài khoản.");
   }
 
   return { id: user.id, username, fullName: String(body.fullName || username).trim(), role, studentId };
@@ -108,7 +118,9 @@ module.exports = async function handler(request, response) {
       { headers: supabaseHeaders(serviceKey) }
     );
     const profiles = await readJson(profileResponse);
-    if (!profileResponse.ok) throw new Error("Không thể xác minh quyền tài khoản.");
+    if (!profileResponse.ok) {
+      throw supabaseRequestError(profileResponse, profiles, "Không thể xác minh quyền tài khoản.");
+    }
     const actor = Array.isArray(profiles) ? profiles[0] : null;
     if (!actor || actor.role !== "gvcn") {
       json(response, 403, { error: "Chỉ GVCN mới được quản lý tài khoản." });
@@ -134,7 +146,9 @@ module.exports = async function handler(request, response) {
     );
     const targets = await readJson(targetResponse);
     const target = Array.isArray(targets) ? targets[0] : null;
-    if (!targetResponse.ok) throw new Error("Không thể xác minh tài khoản mục tiêu.");
+    if (!targetResponse.ok) {
+      throw supabaseRequestError(targetResponse, targets, "Không thể xác minh tài khoản mục tiêu.");
+    }
     if (!target || target.class_id !== actor.class_id || target.role === "gvcn") {
       json(response, 403, { error: "Không được quản lý tài khoản này." });
       return;
@@ -149,7 +163,7 @@ module.exports = async function handler(request, response) {
         body: JSON.stringify({ password }),
       });
       const result = await readJson(updateResponse);
-      if (!updateResponse.ok) throw new Error(result && result.msg ? result.msg : "Không thể đổi mật khẩu.");
+      if (!updateResponse.ok) throw supabaseRequestError(updateResponse, result, "Không thể đổi mật khẩu.");
       json(response, 200, { ok: true });
       return;
     }
@@ -161,7 +175,7 @@ module.exports = async function handler(request, response) {
       });
       if (!deleteResponse.ok) {
         const result = await readJson(deleteResponse);
-        throw new Error(result && result.msg ? result.msg : "Không thể xóa tài khoản.");
+        throw supabaseRequestError(deleteResponse, result, "Không thể xóa tài khoản.");
       }
       json(response, 200, { ok: true });
       return;
