@@ -231,53 +231,8 @@
         function escapeHtmlAttr(str) { return str ? String(str).replace(/"/g, '&quot;') : ''; }
         function escapeHtmlText(str) { return String(str ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
-        function normalizeStudentName(value) {
-            return String(value ?? '').normalize('NFKC').trim()
-                .replace(/\s+/g, ' ').toLocaleLowerCase('vi');
-        }
-
         window.getStudentDisplayName = function(student) {
-            return escapeHtmlText(student && student.nickname ? student.nickname : student && student.name ? student.name : 'Học sinh');
-        };
-
-        window.prepareDuplicateStudentNicknames = function(students, namesToCheck) {
-            const groups = new Map();
-            const checkedNames = new Set((Array.isArray(namesToCheck) ? namesToCheck : [namesToCheck])
-                .filter(Boolean).map(normalizeStudentName));
-            students.forEach(student => {
-                const key = normalizeStudentName(student.name);
-                if (!key) return;
-                const group = groups.get(key) || [];
-                group.push(student);
-                groups.set(key, group);
-            });
-
-            const updates = [];
-            for (const [key, group] of groups) {
-                if (!checkedNames.has(key)) continue;
-                if (group.length < 2) continue;
-                const usedNicknames = new Set();
-                for (let index = 0; index < group.length; index++) {
-                    const student = group[index];
-                    let nickname = String(student.nickname || '').trim();
-                    while (!nickname || usedNicknames.has(normalizeStudentName(nickname))) {
-                        const suggested = `${student.name}${index + 1}`;
-                        const entered = window.prompt(
-                            `Có nhiều học sinh cùng tên “${student.name}”. Nhập biệt danh riêng để phân biệt:`,
-                            suggested
-                        );
-                        if (entered === null) {
-                            showToast('Đã hủy thao tác vì chưa nhập đủ biệt danh cho học sinh trùng tên.', 'error');
-                            return null;
-                        }
-                        nickname = entered.trim();
-                        if (!nickname) showToast('Biệt danh không được để trống.', 'error');
-                    }
-                    usedNicknames.add(normalizeStudentName(nickname));
-                    updates.push({ student, nickname });
-                }
-            }
-            return updates;
+            return escapeHtmlText(student && student.name ? student.name : 'Học sinh');
         };
         
         function generateUniqueCode() {
@@ -3720,7 +3675,7 @@ function renderViewBaoCao() {
             const historyHtml = historyList ? historyList + ((s.history && s.history.length > 3) ? `<div class="text-[10px] font-bold text-blue-400 italic mt-1 bg-blue-50 px-2 py-0.5 rounded inline-block">...và ${s.history.length - 3} ghi nhận khác</div>` : '') : '<span class="text-slate-400 italic text-xs">Chưa có ghi nhận thi đua</span>';
 
             return `
-            <tr class="nhatky-row border-b border-slate-100 hover:bg-slate-50 transition-colors" data-name="${escapeHtmlAttr(`${s.name} ${s.nickname || ''}`.toLowerCase())}">
+            <tr class="nhatky-row border-b border-slate-100 hover:bg-slate-50 transition-colors" data-name="${escapeHtmlAttr(String(s.name || '').toLowerCase())}">
                 <td class="p-4 text-center text-slate-400 font-bold">${index + 1}</td>
                 <td class="p-4">
                     <div class="flex items-center gap-3">
@@ -4534,7 +4489,7 @@ window.saveStudentEdit = function() {
         prevConduct: document.getElementById('edit-s-prev-conduct').value
     };
     
-    // 3. Xử lý lưu và yêu cầu biệt danh riêng nếu trùng họ tên
+    // 3. Xử lý lưu hồ sơ học sinh
     const existingIndex = state.editingStudentId
         ? state.students.findIndex(s => s.id === state.editingStudentId)
         : -1;
@@ -4545,14 +4500,6 @@ window.saveStudentEdit = function() {
     const candidate = existingIndex >= 0
         ? { ...state.students[existingIndex], ...studentData }
         : { ...studentData, id: newId, points: 0, stars: 0, history: [], comment: '' };
-    if (existingIndex >= 0 && normalizeStudentName(candidate.name) !== normalizeStudentName(state.students[existingIndex].name)) {
-        candidate.nickname = '';
-    }
-    const otherStudents = state.students.filter((student, index) => index !== existingIndex);
-    const nicknameUpdates = window.prepareDuplicateStudentNicknames([...otherStudents, candidate], candidate.name);
-    if (!nicknameUpdates) return;
-    nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
-
     if (existingIndex >= 0) {
         state.students[existingIndex] = candidate;
         if(typeof logBCSAction === 'function') logBCSAction('Sửa thông tin học sinh: ' + studentData.name);
@@ -4755,12 +4702,6 @@ window.openEditGroupModal = function(id) {
             });
             const addedCount = importedStudents.length;
             if (addedCount > 0) {
-                const nicknameUpdates = window.prepareDuplicateStudentNicknames(
-                    [...state.students, ...importedStudents],
-                    importedStudents.map(student => student.name)
-                );
-                if (!nicknameUpdates) return;
-                nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
                 state.students.push(...importedStudents);
             }
             if (addedCount > 0) { saveData(); renderLayout(); closeModal('import-modal'); showToast(`Đã nhập thành công ${addedCount} học sinh!`, "success"); }

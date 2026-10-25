@@ -318,7 +318,6 @@
       const newStudents = pending.imported
         .filter(item => item.isNewStudent)
         .map(item => item.student);
-      const nicknameChanged = updateImportedDuplicateNicknames(pending.imported, state.students || []);
       const identifierChanged = pending.imported.some(({ student, identifier }) =>
         identifier && student.identifier !== identifier
       );
@@ -326,7 +325,7 @@
         if (identifier) student.identifier = identifier;
       });
       if (newStudents.length) state.students.push(...newStudents);
-      if (newStudents.length || nicknameChanged || identifierChanged) {
+      if (newStudents.length || identifierChanged) {
         saveData();
         await window.persistCloudClass();
       }
@@ -389,39 +388,6 @@
       return "Database chưa có cột quyền công bố ĐTBmhk. Hãy chạy lại supabase/schema.sql trong Supabase SQL Editor rồi tải lại trang.";
     }
     return message || fallback;
-  }
-
-  function updateImportedDuplicateNicknames(imported, roster) {
-    const groups = new Map();
-    let changed = false;
-    for (const item of imported) {
-      const key = normalizeStudentKey(item.student.name);
-      if (!key) continue;
-      const group = groups.get(key) || [];
-      group.push(item.student);
-      groups.set(key, group);
-    }
-
-    for (const students of groups.values()) {
-      if (students.length > 1) {
-        students.forEach((student, index) => {
-          const nickname = `${student.name} ${index + 1}`;
-          if (student.nickname !== nickname) changed = true;
-          student.nickname = nickname;
-        });
-        continue;
-      }
-
-      const importedNameKey = normalizeStudentKey(students[0] && students[0].name);
-      (roster || students).filter(student => normalizeStudentKey(student.name) === importedNameKey).forEach(student => {
-        const generatedNickname = new RegExp(`^${String(student.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d+$`, "i");
-        if (generatedNickname.test(String(student.nickname || ""))) {
-          student.nickname = "";
-          changed = true;
-        }
-      });
-    }
-    return changed;
   }
 
   async function upsertGradeRecords(client, records) {
