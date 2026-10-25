@@ -20,13 +20,13 @@ The static page alone cannot share data between browsers. Vercel serves the page
 
 ### 2. Configure Vercel
 
-Import this repository into Vercel and add these Environment Variables to the deployment:
+Import this repository into Vercel and add these Environment Variables to the deployment. The app accepts either the `SUPABASE_*` names below or the `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` names:
 
 - `SUPABASE_URL`: Project URL from Supabase **Settings → API**.
-- `SUPABASE_ANON_KEY`: Supabase publishable/anon key.
-- `SUPABASE_SERVICE_ROLE_KEY`: service-role key. Used only by `/api/admin-users` to provision accounts after verifying the caller is GVCN.
+- `SUPABASE_ANON_KEY`: Supabase publishable/anon key. You can instead set `VITE_SUPABASE_PUBLISHABLE_KEY`.
+- `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`: server-only service-role/secret key. Used by `/api/admin-users` and `/api/reminders` for privileged operations.
 
-Deploy the project. `/api/config` exposes only the public URL and anon key; the service-role key stays in the Vercel function environment.
+`VITE_SUPABASE_URL` is also accepted instead of `SUPABASE_URL`. `/api/config` exposes only the public URL and publishable/anon key; the service-role key stays in the Vercel function environment. Do not add a service-role or secret key to any `VITE_` variable or browser code.
 For local Vercel development, copy `.env.example` to `.env.local` and fill it in; never commit the populated file.
 
 ### 3. Create accounts and recover saved data
