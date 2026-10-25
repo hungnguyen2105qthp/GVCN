@@ -154,7 +154,7 @@
     auth: { loggedIn: false, role: 'gvcn' }, 
     loginRoleSelect: 'gvcn',
     auditLogs: [],
-            theme: { month: "CHỦ ĐIỂM THÁNG", title: "CHUYẾN TÀU THANH XUÂN", bannerUrl: "", bannerColorClass: "from-[#08a8f9] to-[#1746cb]" },
+            theme: { month: "CHỦ ĐIỂM THÁNG", title: "CHUYẾN TÀU THANH XUÂN", bannerUrl: "", topBannerUrl: "", bannerColorClass: "from-[#08a8f9] to-[#1746cb]" },
             admin: { name: "Giáo Viên", role: "Giáo viên chủ nhiệm", avatarUrl: "", className: "LỚP 12C1", classAvatarUrl: "" },
             tasks: [], 
             journeys: [],
@@ -230,6 +230,53 @@
         function escapeInlineJs(str) { return str ? String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n').replace(/\r/g, '\\r') : ''; }
         function escapeHtmlAttr(str) { return str ? String(str).replace(/"/g, '&quot;') : ''; }
         function escapeHtmlText(str) { return String(str ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
+
+        function normalizeStudentName(value) {
+            return String(value ?? '').trim().normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd')
+                .toLocaleLowerCase('vi').replace(/[^a-z0-9]/g, '');
+        }
+
+        window.getStudentDisplayName = function(student) {
+            return escapeHtmlText(student && student.nickname ? student.nickname : student && student.name ? student.name : 'Học sinh');
+        };
+
+        window.prepareDuplicateStudentNicknames = function(students) {
+            const groups = new Map();
+            students.forEach(student => {
+                const key = normalizeStudentName(student.name);
+                if (!key) return;
+                const group = groups.get(key) || [];
+                group.push(student);
+                groups.set(key, group);
+            });
+
+            const updates = [];
+            for (const group of groups.values()) {
+                if (group.length < 2) continue;
+                const usedNicknames = new Set();
+                for (let index = 0; index < group.length; index++) {
+                    const student = group[index];
+                    let nickname = String(student.nickname || '').trim();
+                    while (!nickname || usedNicknames.has(normalizeStudentName(nickname))) {
+                        const suggested = `${student.name}${index + 1}`;
+                        const entered = window.prompt(
+                            `Có nhiều học sinh cùng tên “${student.name}”. Nhập biệt danh riêng để phân biệt:`,
+                            suggested
+                        );
+                        if (entered === null) {
+                            showToast('Đã hủy thao tác vì chưa nhập đủ biệt danh cho học sinh trùng tên.', 'error');
+                            return null;
+                        }
+                        nickname = entered.trim();
+                        if (!nickname) showToast('Biệt danh không được để trống.', 'error');
+                    }
+                    usedNicknames.add(normalizeStudentName(nickname));
+                    updates.push({ student, nickname });
+                }
+            }
+            return updates;
+        };
         
         function generateUniqueCode() {
             let code, attempts = 0;
@@ -238,7 +285,11 @@
             return code;
         }
 
-        function compressImage(file, callback, max_size = 300, quality = 0.8) {
+        function compressImage(file, callback, max_size = 300, quality = 0.8, onError = null) {
+            const reportError = error => {
+                if (typeof onError === 'function') onError(error);
+                else console.error('Không thể xử lý ảnh:', error);
+            };
             const reader = new FileReader();
             reader.onload = function(event) {
                 const img = new Image();
@@ -249,12 +300,31 @@
                     else { if (height > max_size) { width *= max_size / height; height = max_size; } }
                     canvas.width = width; canvas.height = height;
                     const ctx = canvas.getContext('2d');
+                    if (!ctx) {
+                        reportError(new Error('Không thể xử lý ảnh trên trình duyệt này.'));
+                        return;
+                    }
                     ctx.drawImage(img, 0, 0, width, height);
-                    callback(canvas.toDataURL('image/jpeg', quality)); 
+                    try {
+                        callback(canvas.toDataURL('image/jpeg', quality));
+                    } catch (error) {
+                        if (typeof onError === 'function') reportError(error);
+                        else throw error;
+                    }
+                };
+                img.onerror = function() {
+                    reportError(new Error('Tệp ảnh không hợp lệ hoặc không thể mở.'));
                 };
                 img.src = event.target.result;
             };
-            reader.readAsDataURL(file);
+            reader.onerror = function() {
+                reportError(new Error('Không thể đọc tệp ảnh.'));
+            };
+            try {
+                reader.readAsDataURL(file);
+            } catch (error) {
+                reportError(error);
+            }
         }
 
         function normalizeAccountRole(role) {
@@ -312,7 +382,7 @@
             const recipientsHtml = eligibleStudents.map(student => `
                 <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50">
                     <input type="checkbox" data-reminder-recipient value="${escapeHtmlAttr(student.id)}" onchange="updateReminderAllState()" class="h-4 w-4 accent-indigo-600">
-                    <span class="truncate">${escapeHtmlText(student.name || 'Học sinh')}<span class="ml-1 font-medium text-slate-400">${escapeHtmlText(student.group || '')}</span></span>
+                    <span class="truncate">${getStudentDisplayName(student)}<span class="ml-1 font-medium text-slate-400">${escapeHtmlText(student.group || '')}</span></span>
                 </label>`).join('');
             const senderStudent = role === 'bcs' ? getBcsLinkedStudent() : null;
             const recipientScope = role === 'bcs' && String(senderStudent && senderStudent.role || '').toLocaleLowerCase('vi').includes('tổ trưởng')
@@ -439,6 +509,51 @@
             }
         }
 
+        function getUpcomingTimetableReminders() {
+            const today = new Date();
+            const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            return getTimetableReminderEntries()
+                .filter(reminder => reminder.date >= todayString && String(reminder.message || '').trim())
+                .sort((left, right) => `${left.date} ${left.time || ''}`.localeCompare(`${right.date} ${right.time || ''}`));
+        }
+
+        function getSeenTimetableReminderIds() {
+            const userId = String(state.auth && state.auth.userId || '');
+            if (!userId) return new Set();
+            try {
+                const ids = JSON.parse(localStorage.getItem(`timetableReminderSeen:${userId}`) || '[]');
+                return new Set(Array.isArray(ids) ? ids.map(String) : []);
+            } catch (error) {
+                console.error('Không thể đọc trạng thái lời nhắc thời khóa biểu:', error);
+                return new Set();
+            }
+        }
+
+        function isTimetableReminderUnread(reminder) {
+            return !getSeenTimetableReminderIds().has(String(reminder.id));
+        }
+
+        function getUnreadTimetableReminderCount() {
+            return getUpcomingTimetableReminders().filter(isTimetableReminderUnread).length;
+        }
+
+        window.markTimetableReminderRead = function(reminderId) {
+            const userId = String(state.auth && state.auth.userId || '');
+            if (!userId) return;
+            if (!getUpcomingTimetableReminders().some(reminder => String(reminder.id) === String(reminderId))) return;
+            try {
+                const key = `timetableReminderSeen:${userId}`;
+                const existing = JSON.parse(localStorage.getItem(key) || '[]');
+                const seen = new Set(Array.isArray(existing) ? existing.map(String) : []);
+                seen.add(String(reminderId));
+                localStorage.setItem(key, JSON.stringify([...seen].slice(-200)));
+            } catch (error) {
+                console.error('Không thể đánh dấu lời nhắc thời khóa biểu đã đọc:', error);
+                showToast('Không lưu được trạng thái đã đọc lời nhắc.', 'error');
+            }
+            updateClassReminderNotificationControl();
+        };
+
         window.openClassReminderNotifications = function() {
             state.showReminderNotifications = true;
             updateClassReminderNotificationControl();
@@ -472,11 +587,65 @@
             if (control) control.outerHTML = renderClassReminderNotifications();
         };
 
+        function notifyNewTimetableReminders() {
+            const userId = String(state.auth && state.auth.userId || '');
+            if (!userId || state.auth.role === 'gvcn') return;
+            const reminders = getUpcomingTimetableReminders();
+            const key = `timetableReminderNotified:${userId}`;
+            try {
+                const stored = sessionStorage.getItem(key);
+                const knownIds = new Set(stored ? JSON.parse(stored).map(String) : []);
+                const fresh = stored === null ? [] : reminders.filter(reminder => !knownIds.has(String(reminder.id)));
+                sessionStorage.setItem(key, JSON.stringify([...new Set([...knownIds, ...reminders.map(reminder => String(reminder.id))])].slice(-200)));
+                if (fresh.length) {
+                    const latest = fresh[fresh.length - 1];
+                    showToast(`Có ${fresh.length} lời nhắc thời khóa biểu mới: ${escapeHtmlText(latest.subject || 'môn học')} · ${escapeHtmlText(formatTimetableDate(latest.date))} ${escapeHtmlText(latest.time || '')}`, 'success');
+                }
+            } catch (error) {
+                console.error('Không thể theo dõi lời nhắc thời khóa biểu mới:', error);
+                showToast('Không thể cập nhật trạng thái thông báo thời khóa biểu.', 'error');
+            }
+        }
+
+        window.refreshTimetableReminderState = async function(notify = true) {
+            if (!state.auth || !state.auth.loggedIn || state.auth.role === 'gvcn' || !state.cloudProfile) return;
+            const client = await window.cloudReady;
+            const { data, error } = await client
+                .from('class_data')
+                .select('state')
+                .eq('class_id', state.cloudProfile.class_id)
+                .maybeSingle();
+            if (error) throw error;
+            window.timetableReminderSyncErrorShown = false;
+            const reminders = data && data.state && data.state.timetableReminders;
+            const nextReminders = reminders && typeof reminders === 'object' && !Array.isArray(reminders) ? reminders : {};
+            const changed = JSON.stringify(nextReminders) !== JSON.stringify(state.timetableReminders || {});
+            state.timetableReminders = nextReminders;
+            if (changed) updateClassReminderNotificationControl();
+            if (notify) notifyNewTimetableReminders();
+        };
+
+        window.startTimetableReminderSync = function() {
+            if (!state.auth || state.auth.role === 'gvcn') return;
+            const refresh = () => window.refreshTimetableReminderState(true).catch(error => {
+                console.error('Không thể đồng bộ lời nhắc thời khóa biểu:', error);
+                if (!window.timetableReminderSyncErrorShown) {
+                    window.timetableReminderSyncErrorShown = true;
+                    showToast(error.message || 'Không thể đồng bộ lời nhắc thời khóa biểu.', 'error');
+                }
+            });
+            refresh();
+            if (!window.timetableReminderSyncInterval) {
+                window.timetableReminderSyncInterval = setInterval(refresh, 30000);
+            }
+        };
+
         function renderClassReminderNotifications() {
             if (!state.auth || !state.auth.loggedIn) return '';
-            const unreadCount = getUnreadClassReminderCount();
+            const timetableReminders = getUpcomingTimetableReminders();
+            const unreadCount = getUnreadClassReminderCount() + getUnreadTimetableReminderCount();
             const reminders = (state.classReminders || []).slice(0, 20);
-            const items = reminders.map(reminder => {
+            const classItems = reminders.map(reminder => {
                 const sender = reminder.sender_role === 'GVCN' || reminder.sender_name === 'GVCN'
                     ? 'Giáo viên chủ nhiệm'
                     : reminder.sender_name || reminder.sender_role || 'Ban cán sự';
@@ -489,6 +658,17 @@
                     <span class="mt-2 block whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-slate-700">${escapeHtmlText(reminder.message || '')}</span>
                 </button>`;
             }).join('');
+            const timetableItems = timetableReminders.slice(0, 20).map(reminder => {
+                const unread = isTimetableReminderUnread(reminder);
+                const date = `${formatTimetableDate(reminder.date)} · ${reminder.time || '--:--'}`;
+                const details = `${reminder.subject || 'Môn học'} · ${reminder.period || 'Tiết học'}${reminder.session ? ` · ${reminder.session}` : ''}`;
+                return `<button type="button" onclick="markTimetableReminderRead('${escapeHtmlAttr(reminder.id)}')" class="block w-full rounded-xl border ${unread ? 'border-amber-200 bg-amber-50/70' : 'border-slate-100 bg-white'} p-3 text-left transition hover:border-amber-300 hover:shadow-sm">
+                    <span class="flex items-center gap-2"><span class="text-xs font-black text-amber-900">Lời nhắc thời khóa biểu</span>${unread ? '<span class="h-2 w-2 rounded-full bg-rose-500"></span>' : ''}<span class="ml-auto text-[10px] text-slate-400">${escapeHtmlText(date)}</span></span>
+                    <span class="mt-1 block text-[10px] font-bold text-slate-500">${escapeHtmlText(details)}</span>
+                    <span class="mt-2 block whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-slate-700">${escapeHtmlText(reminder.message || '')}</span>
+                </button>`;
+            }).join('');
+            const items = `${classItems}${timetableItems}`;
             return `<div id="class-reminder-notification-control" class="relative">
                 <button type="button" onclick="openClassReminderNotifications()" aria-label="Thông báo lời nhắc${unreadCount ? `, ${unreadCount} chưa đọc` : ''}" class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-200">
                     <i class="ph-fill ph-bell-ringing text-xl"></i>
@@ -578,8 +758,20 @@
             if (!state.database.schemaVersion) state.database.schemaVersion = 1;
         }
 
+        let bannerTitleMigrated = false;
         function applyStateDefaults() {
             if (!state.theme) state.theme = { month: "CHỦ ĐIỂM THÁNG 9", title: "CHÀO MỪNG NĂM HỌC MỚI", bannerUrl: "", bannerColorClass: "from-[#08a8f9] to-[#1746cb]" };
+            if (!state.theme.topBannerUrl) state.theme.topBannerUrl = "";
+            const previousBannerTitle = String(state.theme.title || '');
+            const oldScreenshotBanner = ['./Thanh-xuan.png', 'Thanh-xuan.png'].includes(state.theme.bannerUrl);
+            if (/xuấn/iu.test(previousBannerTitle)) {
+                state.theme.title = previousBannerTitle.replace(/xuấn/iu, match =>
+                    match === match.toLocaleUpperCase('vi') ? 'XUÂN' : match[0] === match[0].toLocaleUpperCase('vi') ? 'Xuân' : 'xuân'
+                );
+            }
+            if (oldScreenshotBanner) state.theme.bannerUrl = './assets/banner-chuyen-tau.png';
+            if (/xuấn/iu.test(previousBannerTitle) || oldScreenshotBanner) bannerTitleMigrated = true;
+            if (bannerTitleMigrated && typeof window.saveData === 'function' && state.auth && state.auth.loggedIn && state.auth.role === 'gvcn') window.saveData();
             if (!state.theme.bannerColorClass || state.theme.bannerColorClass === "from-[#1e1b4b] to-[#312e81]") state.theme.bannerColorClass = "from-[#08a8f9] to-[#1746cb]";
             if (!state.admin) state.admin = { name: "Giáo Viên", role: "Giáo viên chủ nhiệm", avatarUrl: "", className: "LỚP 12C1", classAvatarUrl: "" };
             if (!state.settings) state.settings = { sidebarPosition: 'left', deductStarsOnRedeem: true };
@@ -590,6 +782,10 @@
             if (!state.timetable) state.timetable = { dayUrl: '', extraUrl: '' };
             if (!state.timetable) state.timetable = { dayUrl: '', extraUrl: '' };
             if (!Array.isArray(state.timetableHistory)) state.timetableHistory = [];
+            if (!state.timetableReminders || typeof state.timetableReminders !== 'object' || Array.isArray(state.timetableReminders)) {
+                state.timetableReminders = {};
+            }
+            migrateLegacyTimetableReminders();
             if (!state.tasks) state.tasks = [];
             if (!state.journeys) state.journeys = [];
             if (!state.database) state.database = { version: 1, accounts: [] };
@@ -822,23 +1018,13 @@ function renderHorizontalNav() {
     }).join('');
     const studentCount = (state.students || []).length;
     const auth = state.auth || {};
-    const linkedStudent = auth.role === 'bcs' ? getBcsLinkedStudent() : null;
-    const accountName = auth.fullName || auth.username || state.admin.name || 'Tài khoản';
-    const accountRole = auth.role === 'gvcn'
-        ? 'Giáo viên chủ nhiệm'
-        : auth.role === 'bcs'
-            ? (linkedStudent && linkedStudent.role || 'Cán bộ lớp')
-            : auth.role === 'hocsinh'
-                ? 'Học sinh'
-                : state.admin.role || 'Thành viên lớp';
-    const accountSubtitle = `${accountName} · ${accountRole}${auth.role === 'gvcn' ? ` · ${studentCount} học sinh` : ''}`;
     return `<section class="print:hidden bg-[#064e3b] text-white shadow-md">
         <div class="flex min-h-[58px] items-center justify-between gap-4 px-4 py-2 sm:px-6">
             <div class="flex min-w-0 items-center gap-3">
                 <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-300 text-emerald-950"><i class="ph-fill ph-student text-2xl"></i></div>
                 <div class="min-w-0">
                     <div class="truncate text-sm font-black tracking-wide">${escapeHtmlText(state.admin.className || 'LỚP HỌC')}</div>
-                    <div class="truncate text-[10px] font-semibold text-emerald-100">${escapeHtmlText(accountSubtitle)}</div>
+                    <div class="truncate text-[10px] font-semibold text-emerald-100">${studentCount} học sinh</div>
                 </div>
             </div>
             ${renderClassReminderNotifications()}
@@ -883,8 +1069,17 @@ function renderHorizontalNav() {
             app.innerHTML = `
                 <div class="min-h-screen bg-[#f1f5f9]">
                     <div class="relative w-full overflow-hidden bg-sky-400">
-                        <img src="./assets/banner-chuyen-tau.png" alt="Chuyến tàu Thanh Xuân" class="block h-auto w-full">
-                        <span class="absolute left-[22.5%] top-[53%] flex h-[12%] w-[3.8%] items-center justify-center overflow-hidden whitespace-nowrap rounded-[2px] bg-[#15365f] text-[clamp(5px,0.65vw,9px)] font-black leading-none text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16),0_1px_2px_rgba(0,0,0,0.3)]" title="${escapeHtmlAttr(state.admin.className || '12C1')}">${escapeHtmlText(String(state.admin.className || '12C1').trim().replace(/^lớp\s+/i, ''))}</span>
+                        <img src="${escapeHtmlAttr(state.theme.topBannerUrl || './assets/banner-chuyen-tau.png')}" alt="Chuyến tàu Thanh Xuân" class="block h-auto w-full">
+                        ${!state.theme.topBannerUrl ? `<span class="absolute left-[22.5%] top-[53%] flex h-[12%] w-[3.8%] items-center justify-center overflow-hidden whitespace-nowrap rounded-[2px] bg-[#15365f] text-[clamp(5px,0.65vw,9px)] font-black leading-none text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16),0_1px_2px_rgba(0,0,0,0.3)]" title="${escapeHtmlAttr(state.admin.className || '12C1')}">${escapeHtmlText(String(state.admin.className || '12C1').trim().replace(/^lớp\s+/i, ''))}</span>` : ''}
+                        <div class="absolute inset-y-[12%] right-2 flex w-[25%] items-center justify-center sm:right-4 sm:w-[21%] md:right-6 md:w-[18%]">
+                            <img src="${escapeHtmlAttr(state.admin.classAvatarUrl || './anhlop.jfif')}" alt="Ảnh tập thể lớp" class="h-full w-full object-contain">
+                        </div>
+                        ${state.auth && state.auth.role === 'gvcn' ? `
+                            <button type="button" onclick="document.getElementById('top-banner-upload').click()" class="absolute right-3 top-3 z-10 inline-flex items-center gap-2 rounded-xl bg-slate-950/70 px-3 py-2 text-xs font-bold text-white shadow-lg transition hover:bg-slate-950">
+                                <i class="ph-fill ph-camera text-base"></i><span>Đổi banner</span>
+                            </button>
+                            <input type="file" id="top-banner-upload" class="hidden" accept="image/*" onchange="handleTopBannerUpload(event)">
+                        ` : ''}
                     </div>
                     ${renderHorizontalNav()}
                     ${renderHeader()}
@@ -981,7 +1176,7 @@ function renderHorizontalNav() {
             <div class="bg-white/10 hover:bg-white/20 p-4 rounded-2xl border border-white/5 transition-all cursor-pointer group" onclick="switchTab('tich-diem'); selectStudentForPoints(${s.id})">
                 <div class="flex items-center gap-3 mb-2">
                     <span class="text-2xl">${medals[index]}</span>
-                    <div class="font-bold text-white text-base">${s.name}</div>
+                    <div class="font-bold text-white text-base">${getStudentDisplayName(s)}</div>
                     <div class="text-white ml-auto font-black flex items-center gap-1">${s.points || 0} điểm</div>
                 </div>
                 <div class="pl-10 text-xs text-emerald-300 font-bold flex items-center gap-1">
@@ -1001,7 +1196,7 @@ function renderHorizontalNav() {
         const stars = '⭐'.repeat(Math.min(3, Math.ceil(s.weekProg / 5))) || '⭐';
         return `
             <div class="bg-white/10 hover:bg-white/20 p-4 rounded-2xl border border-white/5 transition-all cursor-pointer group mb-3" onclick="switchTab('tich-diem'); selectStudentForPoints(${s.id})">
-                <div class="font-bold text-white text-base mb-0.5">${s.name}</div>
+                <div class="font-bold text-white text-base mb-0.5">${getStudentDisplayName(s)}</div>
                 <div class="text-[11px] text-blue-200 uppercase font-bold tracking-wider mb-2 opacity-80">${s.group}</div>
                 <div class="flex items-center gap-2 text-sm text-yellow-300 font-bold">
                     ${stars} <span class="text-white ml-1">+${s.weekProg} điểm tuần này <i class="ph-bold ph-arrow-up text-emerald-300"></i></span>
@@ -1074,8 +1269,8 @@ function renderHorizontalNav() {
                 <!-- GIAO DIỆN BANNER KÉO GIÃN TRÀN VIỀN 100% -->
                 <div class="w-full h-40 md:h-64 rounded-[2rem] shadow-sm relative flex flex-col items-center justify-center group overflow-hidden ${!state.theme.bannerUrl ? 'bg-gradient-to-br ' + state.theme.bannerColorClass : 'bg-[length:100%_100%] bg-no-repeat'}" ${state.theme.bannerUrl ? `style="background-image: url('${state.theme.bannerUrl}');"` : ''}>
                     ${!state.theme.bannerUrl ? `
-                        <div class="text-white/80 text-[11px] font-bold uppercase tracking-[0.25em] mb-3 z-10">${state.theme.month}</div>
-                        <h1 class="text-white text-3xl md:text-5xl font-black uppercase tracking-tight text-center px-4 z-10 drop-shadow-md">${state.theme.title}</h1>
+                        <div class="text-white/90 text-[11px] font-bold uppercase tracking-[0.25em] mb-3 drop-shadow-md">${escapeHtmlText(state.theme.month || '')}</div>
+                        <h1 class="text-white text-3xl md:text-5xl font-black uppercase tracking-tight text-center px-4 z-10 drop-shadow-md">${escapeHtmlText(state.theme.title || '')}</h1>
                     ` : ''}
                     <button onclick="openEditThemeModal()" class="absolute top-4 right-4 bg-black/40 text-white rounded-full p-2.5 opacity-0 group-hover:opacity-100 transition-all z-20 hover:bg-black/80 shadow-lg"><i class="ph-fill ph-pencil-simple text-base"></i></button>
                 </div>
@@ -1299,8 +1494,8 @@ function renderHorizontalNav() {
                 </div>
             </div>
             
-            ${getAvatarImg(s.avatarUrl, s.name, "w-24 h-24 mb-4 mt-2 ring-4 ring-slate-50 shadow-md")}
-            <div class="font-black text-slate-800 text-xl mb-2 truncate w-full text-center">${s.name}</div>
+            ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-24 h-24 mb-4 mt-2 ring-4 ring-slate-50 shadow-md")}
+            <div class="font-black text-slate-800 text-xl mb-2 truncate w-full text-center">${getStudentDisplayName(s)}</div>
             <div class="flex items-center justify-center gap-2 mb-4">
                 <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-md uppercase border border-slate-200">${s.group || 'Chưa nhóm'}</span>
                 <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-md border border-blue-100">${s.role || 'Thành viên'}</span>
@@ -1417,9 +1612,9 @@ function renderStudentSelfStatistics() {
     return `
         <div class="max-w-7xl mx-auto animate-fade-in space-y-6 pb-12">
             <div class="flex flex-col sm:flex-row sm:items-center gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                ${getAvatarImg(student.avatarUrl, student.name, 'w-16 h-16')}
+                ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), 'w-16 h-16')}
                 <div>
-                    <h2 class="text-2xl font-black text-slate-800">Thống kê của ${escapeTimetableText(student.name)}</h2>
+                    <h2 class="text-2xl font-black text-slate-800">Thống kê của ${getStudentDisplayName(student)}</h2>
                     <p class="mt-1 text-sm font-medium text-slate-500">${escapeTimetableText(student.group || 'Chưa phân tổ')} · Chỉ hiển thị dữ liệu của tài khoản này</p>
                 </div>
             </div>
@@ -1479,7 +1674,7 @@ function renderStudentSelfStatistics() {
                             <select onchange="updatePointsForm('selectedTargetId', this.value)" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all appearance-none cursor-pointer shadow-sm">
                                 <option value="">-- Chọn học sinh --</option>
                                 ${[...state.students].sort((a,b) => a.name.localeCompare(b.name)).map(s => 
-                                                                       `<option value="${s.id}" ${pf.selectedTargetId == s.id ? 'selected' : ''}>${s.name} (${s.group} | ${s.points}đ)</option>`
+                                                                       `<option value="${s.id}" ${pf.selectedTargetId == s.id ? 'selected' : ''}>${getStudentDisplayName(s)} (${s.group} | ${s.points}đ)</option>`
                                 ).join('')}
                             </select>
                             <i class="ph-bold ph-caret-down absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none text-xl"></i>
@@ -1845,8 +2040,8 @@ window.executePointsSubmission = function() {
             const studentListHtml = sortedStudents.map(s => `
                 <button onclick="selectStudentForRewards(${s.id})" class="flex-shrink-0 w-32 rounded-2xl flex flex-col items-center justify-center p-4 transition-all duration-300 relative overflow-hidden group ${s.id === selectedStudentId ? 'bg-gradient-to-b from-blue-50 to-white border-2 border-blueAccent shadow-md transform -translate-y-2' : 'border border-slate-200 hover:bg-slate-50 bg-white hover:shadow-sm'}">
                     ${s.id === selectedStudentId ? '<div class="absolute top-0 w-full h-1 bg-blueAccent"></div>' : ''}
-                    ${getAvatarImg(s.avatarUrl, s.name, "w-14 h-14 ring-2 ring-slate-100 shadow-sm mb-3 group-hover:scale-110 transition-transform")}
-                    <div class="text-sm font-bold text-slate-800 truncate w-full text-center mb-2">${s.name.split(' ').pop()}</div>
+                    ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-14 h-14 ring-2 ring-slate-100 shadow-sm mb-3 group-hover:scale-110 transition-transform")}
+                    <div class="text-sm font-bold text-slate-800 truncate w-full text-center mb-2">${getStudentDisplayName(s).split(' ').pop()}</div>
                     <div class="text-xs font-black px-3 py-1 rounded-xl bg-orange-50 text-orange-600 border border-orange-100 flex items-center justify-center gap-1.5 w-full"><i class="ph-fill ph-star text-accent"></i> ${s.stars || 0}</div>
                 </button>
             `).join('');
@@ -1896,7 +2091,7 @@ window.executePointsSubmission = function() {
                                 <div class="text-[11px] text-indigo-200 font-bold uppercase tracking-widest mb-2">BƯỚC 1: CHỌN NGƯỜI ĐỔI QUÀ</div>
                                 <select onchange="selectStudentForRewards(parseInt(this.value))" class="w-full text-xl md:text-2xl font-black text-white bg-transparent focus:outline-none cursor-pointer border-b-2 border-white/30 pb-3 focus:border-white transition-colors">
                                     <option value="" class="text-slate-800">-- Nhấp để chọn học sinh --</option>
-                                    ${state.students.map(s => `<option value="${s.id}" class="text-slate-800" ${s.id === selectedStudentId ? 'selected' : ''}>${s.name} (${s.stars} sao)</option>`).join('')}
+                                    ${state.students.map(s => `<option value="${s.id}" class="text-slate-800" ${s.id === selectedStudentId ? 'selected' : ''}>${getStudentDisplayName(s)} (${s.stars} sao)</option>`).join('')}
                                 </select>
                             </div>
                         </div>
@@ -2128,10 +2323,10 @@ window.executePointsSubmission = function() {
                     const renderButton = (val, label, colorTheme) => {
                         const isChecked = status === val;
                         let activeClass = '', idleClass = '';
-                        if (colorTheme === 'emerald') { activeClass = 'bg-white text-emerald-500 border-emerald-500'; idleClass = 'bg-white text-emerald-500/50 border-emerald-500/30 hover:border-emerald-500/50'; }
-                        else if (colorTheme === 'yellow') { activeClass = 'bg-white text-yellow-500 border-yellow-500'; idleClass = 'bg-white text-yellow-500/50 border-yellow-500/30 hover:border-yellow-500/50'; }
-                        else if (colorTheme === 'blue') { activeClass = 'bg-white text-blue-500 border-blue-500'; idleClass = 'bg-white text-blue-500/50 border-blue-500/30 hover:border-blue-500/50'; }
-                        else if (colorTheme === 'red') { activeClass = 'bg-white text-red-500 border-red-500'; idleClass = 'bg-white text-red-500/50 border-red-500/30 hover:border-red-500/50'; }
+                        if (colorTheme === 'emerald') { activeClass = 'bg-emerald-600 text-white border-emerald-700 shadow-sm'; idleClass = 'bg-emerald-100 text-emerald-900 border-emerald-400 hover:bg-emerald-200'; }
+                        else if (colorTheme === 'yellow') { activeClass = 'bg-amber-500 text-white border-amber-600 shadow-sm'; idleClass = 'bg-amber-100 text-amber-900 border-amber-400 hover:bg-amber-200'; }
+                        else if (colorTheme === 'blue') { activeClass = 'bg-blue-600 text-white border-blue-700 shadow-sm'; idleClass = 'bg-blue-100 text-blue-900 border-blue-400 hover:bg-blue-200'; }
+                        else if (colorTheme === 'red') { activeClass = 'bg-red-600 text-white border-red-700 shadow-sm'; idleClass = 'bg-red-100 text-red-900 border-red-400 hover:bg-red-200'; }
                         return `<button onclick="markAttendance(${s.id}, '${val}')" class="w-full h-11 rounded-[0.8rem] border-[1.5px] ${isChecked ? activeClass + ' font-bold' : idleClass + ' font-medium'} transition-colors text-xs flex items-center justify-center">${label}</button>`;
                     };
                     
@@ -2168,9 +2363,9 @@ window.executePointsSubmission = function() {
                         <div class="flex flex-col xl:flex-row py-5 border-b border-slate-100 hover:bg-slate-50/50 transition-colors px-6 md:px-8 gap-6 bg-white items-start xl:items-center">
                             <div class="w-full xl:w-5/12 flex flex-col">
                                 <div class="flex items-center gap-4">
-                                    ${getAvatarImg(s.avatarUrl, s.name, "w-10 h-10")}
+                                    ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-10 h-10")}
                                     <div class="flex-1 min-w-0">
-                                        <div class="font-black text-[15px] text-slate-800 mb-0.5">${s.name}</div>
+                                        <div class="font-black text-[15px] text-slate-800 mb-0.5">${getStudentDisplayName(s)}</div>
                                         <div class="text-[10px] text-slate-500 font-bold uppercase bg-slate-100 px-2 py-0.5 rounded inline-block">${s.group}</div>
                                     </div>
                                 </div>
@@ -2244,7 +2439,7 @@ window.executePointsSubmission = function() {
                     return `
                         <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 !== 0 ? 'bg-slate-50/30' : 'bg-white'}">
                             <td class="p-4 text-center font-bold text-slate-400 text-xs">${index + 1}</td>
-                            <td class="p-4 font-bold text-slate-800 whitespace-nowrap text-sm border-l border-slate-100">${s.name}</td>
+                            <td class="p-4 font-bold text-slate-800 whitespace-nowrap text-sm border-l border-slate-100">${getStudentDisplayName(s)}</td>
                             <td class="p-4 text-center border-l border-slate-100 font-bold text-sm bg-orange-50/30"><span class="text-emerald-600">${presentCount}</span><span class="text-slate-300 mx-1.5">/</span><span class="text-red-500">${absentCount}</span></td>
                             ${dateCells}
                         </tr>
@@ -2334,9 +2529,9 @@ window.executePointsSubmission = function() {
                     : studentStats.map((s, idx) => `
                         <div class="flex items-center gap-4 py-4 border-b border-slate-100 hover:bg-slate-50 transition-colors px-4 group">
                             <div class="w-10 h-10 rounded-full flex items-center justify-center font-black ${idx < 3 ? 'bg-red-100 text-red-600 border border-red-200' : 'bg-slate-100 text-slate-400'}">${idx + 1}</div>
-                            ${getAvatarImg(s.avatarUrl, s.name, 'w-12 h-12 ring-2 ring-white shadow-sm')}
+                            ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-12 h-12 ring-2 ring-white shadow-sm')}
                             <div class="flex-1 min-w-0">
-                                <div class="font-bold text-slate-800 text-base truncate">${s.name}</div>
+                                <div class="font-bold text-slate-800 text-base truncate">${getStudentDisplayName(s)}</div>
                                 <div class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">${s.group}</div>
                             </div>
                             <div class="flex gap-2 flex-wrap justify-end">
@@ -2851,11 +3046,11 @@ window.executePointsSubmission = function() {
                     return `
                         <div class="flex flex-col items-center justify-end group cursor-pointer w-24 sm:w-36 z-${isFirst ? '20' : '10'}" onclick="switchTab('tich-diem'); selectStudentForPoints(${student.id})">
                             <div class="relative mb-4 z-10 transform transition-transform duration-300 ${isFirst ? 'group-hover:scale-125' : 'group-hover:scale-110'}">
-                                ${getAvatarImg(student.avatarUrl, student.name, `w-16 h-16 sm:w-20 sm:h-20 ring-4 ring-white shadow-xl ${isFirst ? 'border-4 border-yellow-400' : ''}`)}
+                                ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), `w-16 h-16 sm:w-20 sm:h-20 ring-4 ring-white shadow-xl ${isFirst ? 'border-4 border-yellow-400' : ''}`)}
                                 <div class="absolute -top-3 -right-3 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black text-white shadow-lg border-2 border-white" style="background: ${badgeColor}">${rank}</div>
                                 ${isFirst ? '<i class="ph-fill ph-crown text-3xl absolute -top-10 left-1/2 -translate-x-1/2 text-yellow-400 drop-shadow-md animate-bounce-slight"></i>' : ''}
                             </div>
-                            <div class="text-white font-bold text-sm sm:text-base mb-4 drop-shadow-md truncate w-full text-center px-1">${student.name.split(' ').pop()}</div>
+                            <div class="text-white font-bold text-sm sm:text-base mb-4 drop-shadow-md truncate w-full text-center px-1">${getStudentDisplayName(student).split(' ').pop()}</div>
                             <div class="w-full ${heightClass} ${bgStyle} rounded-t-[1.5rem] flex flex-col items-center justify-start pt-5 shadow-[0_-10px_20px_${shadowColor}] relative overflow-hidden transition-all duration-300 group-hover:brightness-110">
                                 <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4xKSIvPjwvc3ZnPg==')]"></div>
                                 <span class="font-black text-2xl sm:text-3xl text-white leading-none drop-shadow-lg relative z-10">${student.points || 0}</span>
@@ -2868,8 +3063,8 @@ window.executePointsSubmission = function() {
                 const othersHtml = others.map((s, i) => `
                     <div class="flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3 hover:shadow-md hover:border-blue-200 cursor-pointer transition-all hover:-translate-y-1" onclick="switchTab('tich-diem'); selectStudentForPoints(${s.id})">
                         <div class="w-12 font-black text-center text-slate-300 text-xl">${i + 4}</div>
-                        ${getAvatarImg(s.avatarUrl, s.name, "w-12 h-12 ring-2 ring-slate-100")}
-                        <div class="flex-1 min-w-0"><div class="font-bold text-slate-800 text-base truncate">${s.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">${s.group}</div></div>
+                        ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-12 h-12 ring-2 ring-slate-100")}
+                        <div class="flex-1 min-w-0"><div class="font-bold text-slate-800 text-base truncate">${getStudentDisplayName(s)}</div><div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">${s.group}</div></div>
                         <div class="font-black text-blueAccent text-2xl pr-2">${s.points || 0}</div>
                     </div>
                 `).join('');
@@ -2908,8 +3103,8 @@ window.executePointsSubmission = function() {
                 const renderProgressList = (list, type) => list.map((s, i) => `
                     <div class="flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3 hover:shadow-md cursor-pointer transition-transform hover:-translate-y-1" onclick="switchTab('tich-diem'); selectStudentForPoints(${s.id})">
                         <div class="w-8 h-8 rounded-full flex items-center justify-center font-black ${i < 3 ? (type==='week'?'bg-emerald-100 text-emerald-600':'bg-blue-100 text-blue-600') : 'bg-slate-100 text-slate-400'}">${i + 1}</div>
-                        ${getAvatarImg(s.avatarUrl, s.name, "w-10 h-10")}
-                        <div class="flex-1 min-w-0"><div class="font-bold text-slate-800 text-sm truncate">${s.name}</div><div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">${s.group}</div></div>
+                        ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-10 h-10")}
+                        <div class="flex-1 min-w-0"><div class="font-bold text-slate-800 text-sm truncate">${getStudentDisplayName(s)}</div><div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">${s.group}</div></div>
                         <div class="flex flex-col items-end">
                             <div class="font-black ${type==='week'?'text-emerald-600':'text-blue-600'} text-base ${type==='week'?'bg-emerald-50':'bg-blue-50'} px-3 py-1 rounded-lg">+${type === 'week' ? s.weekProg : s.monthProg}</div>
                             <div class="text-[9px] text-slate-400 font-bold uppercase mt-1.5 tracking-wider">Tổng: ${s.points}</div>
@@ -3022,7 +3217,7 @@ function renderViewBaoCao() {
     const tableRowsHtml = sortedStudents.map((s, index) => `
         <div class="grid grid-cols-12 gap-4 py-4 border-b border-slate-100 items-center hover:bg-blue-50/50 transition-colors text-sm font-semibold text-slate-700">
             <div class="col-span-1 pl-6 text-slate-400">${index + 1}</div>
-            <div class="col-span-4 font-bold text-slate-800 flex items-center gap-3">${getAvatarImg(s.avatarUrl, s.name, 'w-8 h-8 rounded-full')} ${s.name}</div>
+            <div class="col-span-4 font-bold text-slate-800 flex items-center gap-3">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-8 h-8 rounded-full')} ${getStudentDisplayName(s)}</div>
             <div class="col-span-3"><span class="bg-slate-100 px-3 py-1 rounded-lg text-xs border border-slate-200">${s.group}</span></div>
             <div class="col-span-2 font-black text-blueAccent text-base">${s.points || 0}</div>
             <div class="col-span-2 font-bold text-orange-500 flex items-center gap-1">${s.stars || 0} <i class="ph-fill ph-star"></i></div>
@@ -3030,7 +3225,7 @@ function renderViewBaoCao() {
     `).join('');
     const pointTransactions = state.students.flatMap(student => (student.history || [])
         .filter(record => Number(record.points) !== 0)
-        .map(record => ({ ...record, studentName: student.name, group: student.group || '' })))
+        .map(record => ({ ...record, studentName: getStudentDisplayName(student), group: student.group || '' })))
         .sort((a, b) => new Date(b.date) - new Date(a.date))
         .slice(0, 100);
     const pointTransactionsHtml = pointTransactions.map(record => `
@@ -3049,10 +3244,10 @@ function renderViewBaoCao() {
         <div class="w-full lg:w-1/4 bg-slate-50/80 rounded-[1.5rem] p-4 flex items-center gap-4 border border-slate-100 group-hover:bg-indigo-50/40 transition-colors">
             <div class="w-8 flex-shrink-0 text-center font-black text-slate-300 text-2xl">${index + 1}</div>
             <div class="relative flex-shrink-0">
-                ${getAvatarImg(s.avatarUrl, s.name, "w-14 h-14 rounded-2xl ring-4 ring-white shadow-sm object-cover")}
+                ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), "w-14 h-14 rounded-2xl ring-4 ring-white shadow-sm object-cover")}
             </div>
             <div class="flex-1 min-w-0">
-                <div class="font-bold text-slate-800 text-base truncate">${s.name}</div>
+                <div class="font-bold text-slate-800 text-base truncate">${getStudentDisplayName(s)}</div>
                 <div class="flex flex-wrap items-center gap-2 mt-1.5">
                     <span class="text-[10px] font-bold bg-white border border-slate-200 text-slate-500 px-2 py-0.5 rounded-lg">${s.group || 'Tổ 1'}</span>
                     <span class="text-[10px] font-black text-[#1e1b4b] bg-indigo-100 px-2 py-0.5 rounded-lg">${s.points || 0} Đ</span>
@@ -3079,7 +3274,7 @@ function renderViewBaoCao() {
         const attendanceRowsHtml = attendanceStats.map((item, index) => `
             <tr class="border-b border-slate-100 hover:bg-slate-50">
                 <td class="p-3 text-center text-slate-400 font-bold">${index + 1}</td>
-                <td class="p-3 font-bold text-slate-800 whitespace-nowrap">${escapeTimetableText(item.student.name)}</td>
+                <td class="p-3 font-bold text-slate-800 whitespace-nowrap">${getStudentDisplayName(item.student)}</td>
                 <td class="p-3 text-slate-600">${escapeTimetableText(item.student.group || 'Chưa phân tổ')}</td>
                 <td class="p-3 text-center font-black text-amber-600">${item.week.late}</td>
                 <td class="p-3 text-center font-black text-orange-600">${item.month.late}</td>
@@ -3150,7 +3345,7 @@ function renderViewBaoCao() {
                 });
             }
             const cellsHtml = sortedWeeks.map(w => `<td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${weeklyPoints[w].plus > 0 ? '+' + weeklyPoints[w].plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${weeklyPoints[w].minus > 0 ? '-' + weeklyPoints[w].minus : '<span class="text-slate-200 font-normal">-</span>'}</td>`).join('');
-            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, s.name, 'w-6 h-6')} ${s.name}</td>${cellsHtml}</tr>`;
+            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-6 h-6')} ${getStudentDisplayName(s)}</td>${cellsHtml}</tr>`;
         }).join('');
         
         tabContentHtml = `<div class="mt-6 overflow-x-auto custom-scrollbar border border-slate-200 rounded-2xl shadow-sm"><table class="w-full text-sm text-left border-collapse min-w-max"><thead><tr><th rowspan="2" class="p-3 text-center border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-16">STT</th><th rowspan="2" class="p-3 border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px]">Tên Học Sinh</th>${weekHeadersHtml}</tr><tr>${subHeadersHtml}</tr></thead><tbody>${weeklyDataRowsHtml || '<tr><td colspan="100%" class="p-8 text-center text-slate-400 font-medium">Chưa có dữ liệu học sinh.</td></tr>'}</tbody></table></div>`;
@@ -3165,7 +3360,7 @@ function renderViewBaoCao() {
             const monthlyPoints = {}; sortedMonths.forEach(m => monthlyPoints[m] = { plus: 0, minus: 0 });
             if (s.history) s.history.forEach(h => { if (h.date && h.points) { const d = new Date(h.date); const my = `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; if (monthlyPoints[my]) { if (h.points > 0) monthlyPoints[my].plus += h.points; else monthlyPoints[my].minus += Math.abs(h.points); }}});
             const cellsHtml = sortedMonths.map(m => `<td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${monthlyPoints[m].plus > 0 ? '+' + monthlyPoints[m].plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${monthlyPoints[m].minus > 0 ? '-' + monthlyPoints[m].minus : '<span class="text-slate-200 font-normal">-</span>'}</td>`).join('');
-            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, s.name, 'w-6 h-6')} ${s.name}</td>${cellsHtml}</tr>`;
+            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-6 h-6')} ${getStudentDisplayName(s)}</td>${cellsHtml}</tr>`;
         }).join('');
         tabContentHtml = `<div class="mt-6 overflow-x-auto custom-scrollbar border border-slate-200 rounded-2xl shadow-sm"><table class="w-full text-sm text-left border-collapse min-w-max"><thead><tr><th rowspan="2" class="p-3 text-center border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-16">STT</th><th rowspan="2" class="p-3 border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px]">Tên Học Sinh</th>${monthHeadersHtml}</tr><tr>${subHeadersHtml}</tr></thead><tbody>${monthlyDataRowsHtml || '<tr><td colspan="100%" class="p-8 text-center text-slate-400 font-medium">Chưa có dữ liệu học sinh.</td></tr>'}</tbody></table></div>`;
     } else if (currentReportTab === 'diem-hoc-ki') {
@@ -3173,7 +3368,7 @@ function renderViewBaoCao() {
             let hk1Plus = 0, hk1Minus = 0, hk2Plus = 0, hk2Minus = 0;
             if (s.history) s.history.forEach(h => { if (h.date && h.points) { const m = new Date(h.date).getMonth() + 1; if (m >= 8 && m <= 12) { if (h.points > 0) hk1Plus += h.points; else hk1Minus += Math.abs(h.points); } else if (m >= 1 && m <= 5) { if (h.points > 0) hk2Plus += h.points; else hk2Minus += Math.abs(h.points); }}});
             const hk1Total = hk1Plus - hk1Minus, hk2Total = hk2Plus - hk2Minus, yearTotal = hk1Total + hk2Total;
-            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, s.name, 'w-6 h-6')} ${s.name}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${hk1Plus > 0 ? '+' + hk1Plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${hk1Minus > 0 ? '-' + hk1Minus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-200 font-bold text-slate-800 bg-slate-100/50">${hk1Total}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${hk2Plus > 0 ? '+' + hk2Plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${hk2Minus > 0 ? '-' + hk2Minus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-200 font-bold text-slate-800 bg-slate-100/50">${hk2Total}</td><td class="p-3 text-center border-b border-slate-100 font-black text-blueAccent bg-blue-50/40">${yearTotal > 0 ? yearTotal : (yearTotal < 0 ? yearTotal : '<span class="text-slate-300">0</span>')}</td></tr>`;
+            return `<tr class="hover:bg-slate-50/80 transition-colors"><td class="p-3 text-center border-b border-r border-slate-100 text-slate-400 font-bold">${index + 1}</td><td class="p-3 border-b border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap flex items-center gap-2">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-6 h-6')} ${getStudentDisplayName(s)}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${hk1Plus > 0 ? '+' + hk1Plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${hk1Minus > 0 ? '-' + hk1Minus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-200 font-bold text-slate-800 bg-slate-100/50">${hk1Total}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-emerald-600 bg-emerald-50/30">${hk2Plus > 0 ? '+' + hk2Plus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-100 font-bold text-red-500 bg-red-50/30">${hk2Minus > 0 ? '-' + hk2Minus : '<span class="text-slate-200 font-normal">-</span>'}</td><td class="p-3 text-center border-b border-r border-slate-200 font-bold text-slate-800 bg-slate-100/50">${hk2Total}</td><td class="p-3 text-center border-b border-slate-100 font-black text-blueAccent bg-blue-50/40">${yearTotal > 0 ? yearTotal : (yearTotal < 0 ? yearTotal : '<span class="text-slate-300">0</span>')}</td></tr>`;
         }).join('');
         tabContentHtml = `<div class="mt-6 overflow-x-auto custom-scrollbar border border-slate-200 rounded-2xl shadow-sm"><table class="w-full text-sm text-left border-collapse min-w-max"><thead><tr><th rowspan="2" class="p-3 text-center border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px] w-16">STT</th><th rowspan="2" class="p-3 border-b border-r border-slate-200 bg-slate-50 font-bold text-slate-500 uppercase tracking-widest text-[10px]">Tên Học Sinh</th><th colspan="3" class="p-3 text-center border-b border-r border-slate-200 bg-slate-50 font-black text-slate-800 text-sm whitespace-nowrap">HỌC KÌ 1 <span class="text-[10px] font-medium text-slate-400 block mt-1">(T8 - T12)</span></th><th colspan="3" class="p-3 text-center border-b border-r border-slate-200 bg-slate-50 font-black text-slate-800 text-sm whitespace-nowrap">HỌC KÌ 2 <span class="text-[10px] font-medium text-slate-400 block mt-1">(T1 - T5)</span></th><th rowspan="2" class="p-3 text-center border-b border-slate-200 bg-blue-50 font-black text-blue-700 text-xs uppercase tracking-widest whitespace-nowrap">TỔNG KẾT NĂM</th></tr><tr><th class="p-2 text-center border-b border-r border-slate-200 bg-emerald-50/50 text-emerald-600 font-bold text-xs w-20">Cộng</th><th class="p-2 text-center border-b border-r border-slate-200 bg-red-50/50 text-red-500 font-bold text-xs w-20">Trừ</th><th class="p-2 text-center border-b border-r border-slate-200 bg-slate-100 text-slate-700 font-bold text-xs w-20">Tổng HK1</th><th class="p-2 text-center border-b border-r border-slate-200 bg-emerald-50/50 text-emerald-600 font-bold text-xs w-20">Cộng</th><th class="p-2 text-center border-b border-r border-slate-200 bg-red-50/50 text-red-500 font-bold text-xs w-20">Trừ</th><th class="p-2 text-center border-b border-r border-slate-200 bg-slate-100 text-slate-700 font-bold text-xs w-20">Tổng HK2</th></tr></thead><tbody>${hkDataRowsHtml || '<tr><td colspan="100%" class="p-8 text-center text-slate-400 font-medium">Chưa có dữ liệu học sinh.</td></tr>'}</tbody></table></div>`;
     
@@ -3216,13 +3411,13 @@ function renderViewBaoCao() {
             const historyHtml = historyList ? historyList + ((s.history && s.history.length > 3) ? `<div class="text-[10px] font-bold text-blue-400 italic mt-1 bg-blue-50 px-2 py-0.5 rounded inline-block">...và ${s.history.length - 3} ghi nhận khác</div>` : '') : '<span class="text-slate-400 italic text-xs">Chưa có ghi nhận thi đua</span>';
 
             return `
-            <tr class="nhatky-row border-b border-slate-100 hover:bg-slate-50 transition-colors" data-name="${escapeHtmlAttr(s.name.toLowerCase())}">
+            <tr class="nhatky-row border-b border-slate-100 hover:bg-slate-50 transition-colors" data-name="${escapeHtmlAttr(`${s.name} ${s.nickname || ''}`.toLowerCase())}">
                 <td class="p-4 text-center text-slate-400 font-bold">${index + 1}</td>
                 <td class="p-4">
                     <div class="flex items-center gap-3">
-                        ${getAvatarImg(s.avatarUrl, s.name, 'w-10 h-10')}
+                        ${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-10 h-10')}
                         <div>
-                            <div class="font-bold text-slate-800 text-sm">${s.name}</div>
+                            <div class="font-bold text-slate-800 text-sm">${getStudentDisplayName(s)}</div>
                             <div class="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">${s.group}</div>
                         </div>
                     </div>
@@ -3364,12 +3559,12 @@ function renderViewBaoCao() {
         const violators = sortedStudentsForDuty.filter(s => violatorIds.has(s.id));
         if (violators.length > 0) {
             studentOptions += `<optgroup label="⚠️ Học sinh vi phạm gần đây">`;
-            violators.forEach(s => studentOptions += `<option value="${s.id}">${s.name} (${s.group})</option>`);
+            violators.forEach(s => studentOptions += `<option value="${s.id}">${getStudentDisplayName(s)} (${s.group})</option>`);
             studentOptions += `</optgroup>`;
         }
         studentOptions += `<optgroup label="Tất cả học sinh">`;
         sortedStudentsForDuty.filter(s => !violatorIds.has(s.id)).forEach(s => {
-            studentOptions += `<option value="${s.id}">${s.name} (${s.group})</option>`;
+            studentOptions += `<option value="${s.id}">${getStudentDisplayName(s)} (${s.group})</option>`;
         });
         studentOptions += `</optgroup>`;
 
@@ -3393,9 +3588,9 @@ function renderViewBaoCao() {
                     <button onclick="deleteDutyAssignment(${d.id})" class="absolute top-2 right-2 w-7 h-7 bg-slate-50 hover:bg-emerald-500 text-slate-400 hover:text-white rounded-full flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 shadow-sm" title="Đánh dấu hoàn thành">
                         <i class="ph-bold ph-check text-sm"></i>
                     </button>
-                    ${getAvatarImg(student.avatarUrl, student.name, 'w-12 h-12 ring-2 ring-rose-50 object-cover')}
+                    ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), 'w-12 h-12 ring-2 ring-rose-50 object-cover')}
                     <div class="flex-1 min-w-0">
-                        <div class="font-bold text-slate-800 text-base truncate pr-6">${student.name}</div>
+                        <div class="font-bold text-slate-800 text-base truncate pr-6">${getStudentDisplayName(student)}</div>
                         <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">${student.group}</div>
                         <div class="text-sm font-bold text-rose-700 bg-rose-50 px-3 py-1.5 rounded-lg inline-block border border-rose-100 mb-2">
                             <i class="ph-fill ph-broom mr-1"></i> ${d.task}
@@ -3625,7 +3820,7 @@ function renderViewCaiDat() {
                                         <label class="block text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">Học sinh trong danh sách</label>
                                         <select id="new-account-student" onchange="syncNewAccountStudentName()" class="w-full px-4 py-3 border border-slate-200 rounded-xl focus:border-indigo-400 outline-none font-bold text-slate-700">
                                             <option value="">-- Chọn học sinh --</option>
-                                            ${state.students.filter(student => !(state.users || []).some(user => ['hocsinh', 'bcs'].includes(user.role) && String(user.studentId) === String(student.id))).map(student => `<option value="${student.id}">${escapeHtmlAttr(student.name)}${student.code ? ` — ${escapeHtmlAttr(student.code)}` : ''}</option>`).join('')}
+                                            ${state.students.filter(student => !(state.users || []).some(user => ['hocsinh', 'bcs'].includes(user.role) && String(user.studentId) === String(student.id))).map(student => `<option value="${student.id}">${getStudentDisplayName(student)}${student.code ? ` — ${escapeHtmlAttr(student.code)}` : ''}</option>`).join('')}
                                         </select>
                                     </div>
                                     <div>
@@ -4030,25 +4225,32 @@ window.saveStudentEdit = function() {
         prevConduct: document.getElementById('edit-s-prev-conduct').value
     };
     
-   // 3. Xử lý Lưu (Cập nhật người cũ hoặc Thêm người mới)
-    if (state.editingStudentId) {
-        const index = state.students.findIndex(s => s.id === state.editingStudentId);
-        if (index > -1) {
-            state.students[index] = { ...state.students[index], ...studentData };
-            if(typeof logBCSAction === 'function') logBCSAction('Sửa thông tin học sinh: ' + studentData.name); 
-            showToast("Đã cập nhật hồ sơ học sinh thành công!", "success");
-        }
+    // 3. Xử lý lưu và yêu cầu biệt danh riêng nếu trùng họ tên
+    const existingIndex = state.editingStudentId
+        ? state.students.findIndex(s => s.id === state.editingStudentId)
+        : -1;
+    if (state.editingStudentId && existingIndex < 0) {
+        return showToast("Không tìm thấy hồ sơ học sinh cần cập nhật.", "error");
+    }
+    const newId = state.students.length > 0 ? Math.max(...state.students.map(s => Number(s.id) || 0)) + 1 : 1;
+    const candidate = existingIndex >= 0
+        ? { ...state.students[existingIndex], ...studentData }
+        : { ...studentData, id: newId, points: 0, stars: 0, history: [], comment: '' };
+    if (existingIndex >= 0 && normalizeStudentName(candidate.name) !== normalizeStudentName(state.students[existingIndex].name)) {
+        candidate.nickname = '';
+    }
+    const otherStudents = state.students.filter((student, index) => index !== existingIndex);
+    const nicknameUpdates = window.prepareDuplicateStudentNicknames([...otherStudents, candidate]);
+    if (!nicknameUpdates) return;
+    nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
+
+    if (existingIndex >= 0) {
+        state.students[existingIndex] = candidate;
+        if(typeof logBCSAction === 'function') logBCSAction('Sửa thông tin học sinh: ' + studentData.name);
+        showToast("Đã cập nhật hồ sơ học sinh thành công!", "success");
     } else {
-        const newId = state.students.length > 0 ? Math.max(...state.students.map(s => s.id)) + 1 : 1;
-        state.students.push({
-            ...studentData,
-            id: newId,
-            points: 0,
-            stars: 0,
-            history: [],
-            comment: ''
-        });
-        if(typeof logBCSAction === 'function') logBCSAction('Thêm học sinh mới: ' + studentData.name); 
+        state.students.push(candidate);
+        if(typeof logBCSAction === 'function') logBCSAction('Thêm học sinh mới: ' + studentData.name);
         showToast("Đã thêm học sinh mới thành công!", "success");
     }
     
@@ -4221,12 +4423,12 @@ window.openEditGroupModal = function(id) {
         }
 
       function processImportRows(rows) {
-            let addedCount = 0;
+            const importedStudents = [];
             let currentId = state.students.length > 0 ? Math.max(...state.students.map(s => s.id)) + 1 : 1;
             rows.forEach((row, i) => {
                 if (i === 0 && row[0] && row[0].toString().toLowerCase().includes('tên')) return;
                 const name = (row[0] || '').toString().trim(); if (!name) return;
-                state.students.push({ 
+                importedStudents.push({
                     id: currentId++, name: name, 
                     gender: (row[1] || '').toString().trim() || 'Nam', 
                     group: (row[2] || '').toString().trim() || 'Tổ 1', 
@@ -4241,8 +4443,14 @@ window.openEditGroupModal = function(id) {
                     prevConduct: (row[11] || '').toString().trim() || '',
                     avatarUrl: '', points: 0, stars: 0, code: generateUniqueCode(), history: [] 
                 });
-                addedCount++;
             });
+            const addedCount = importedStudents.length;
+            if (addedCount > 0) {
+                const nicknameUpdates = window.prepareDuplicateStudentNicknames([...state.students, ...importedStudents]);
+                if (!nicknameUpdates) return;
+                nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
+                state.students.push(...importedStudents);
+            }
             if (addedCount > 0) { saveData(); renderLayout(); closeModal('import-modal'); showToast(`Đã nhập thành công ${addedCount} học sinh!`, "success"); }
         }
         
@@ -4405,7 +4613,7 @@ window.openEditGroupModal = function(id) {
         function openResetPointsModal() {
             let optionsHtml = `<option value="all">Tất cả học sinh</option>`;
             state.groups.forEach(g => optionsHtml += `<option value="group_${g.name}">Tổ: ${g.name}</option>`);
-            state.students.forEach(s => optionsHtml += `<option value="student_${s.id}">Cá nhân: ${s.name}</option>`);
+            state.students.forEach(s => optionsHtml += `<option value="student_${s.id}">Cá nhân: ${getStudentDisplayName(s)}</option>`);
 
             document.getElementById('modal-container').innerHTML = `
                 <div class="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" id="reset-points-modal">
@@ -4567,9 +4775,9 @@ window.performDirectLookup = function() {
                     <div class="flex-1 p-4 md:p-8 max-w-4xl mx-auto w-full space-y-8 pb-12 mt-4">
                         <div class="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200 flex flex-col md:flex-row gap-8 items-center md:items-start text-center md:text-left relative overflow-hidden group">
                             <div class="absolute top-0 right-0 w-64 h-64 bg-orange-50 rounded-bl-full -mr-20 -mt-20 z-0 opacity-50"></div>
-                            <div class="relative z-10 flex-shrink-0">${getAvatarImg(student.avatarUrl, student.name, "w-32 h-32 ring-8 ring-orange-50 shadow-xl")}</div>
+                            <div class="relative z-10 flex-shrink-0">${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-32 h-32 ring-8 ring-orange-50 shadow-xl")}</div>
                             <div class="flex-1 relative z-10 w-full">
-                                <h2 class="text-3xl md:text-4xl font-black text-slate-800 mb-3">${student.name}</h2>
+                                <h2 class="text-3xl md:text-4xl font-black text-slate-800 mb-3">${getStudentDisplayName(student)}</h2>
                                 <div class="flex flex-wrap items-center justify-center md:justify-start gap-2 mb-8">
                                     <span class="text-xs font-bold bg-slate-100 text-slate-600 px-4 py-2 rounded-xl border border-slate-200"><i class="ph-fill ph-users mr-1"></i> ${student.group}</span>
                                     <span class="text-xs font-bold bg-blue-50 text-blue-700 px-4 py-2 rounded-xl border border-blue-100"><i class="ph-fill ph-shield-star mr-1"></i> ${student.role || 'Thành viên'}</span>
@@ -4658,10 +4866,11 @@ window.performDirectLookup = function() {
                                 <label class="block text-[11px] font-bold text-slate-500 mb-3 uppercase tracking-widest">Hoặc dùng Ảnh nền (Tùy chọn)</label>
                                 <div class="relative cursor-pointer group mb-2" onclick="document.getElementById('edit-theme-banner-upload').click()">
                                     <div id="banner-preview-container" class="w-full h-36 rounded-2xl bg-slate-100 flex items-center justify-center shadow-inner overflow-hidden border-2 border-dashed border-slate-300 group-hover:border-blueAccent transition-colors relative">
-                                        ${state.theme.bannerUrl ? `<img src="${state.theme.bannerUrl}" class="w-full h-full object-cover">` : `<div class="flex flex-col items-center gap-2"><i class="ph-fill ph-image text-4xl text-slate-300"></i><span class="text-xs font-bold text-slate-400">Bấm để chọn ảnh</span></div>`}
+                                                        ${state.theme.bannerUrl ? `<img src="${state.theme.bannerUrl}" class="w-full h-full object-cover">` : `<div class="flex flex-col items-center gap-2"><i class="ph-fill ph-image text-4xl text-slate-300"></i><span class="text-xs font-bold text-slate-400">Tải ảnh từ máy lên</span></div>`}
                                     </div>
                                     <input type="file" id="edit-theme-banner-upload" class="hidden" accept="image/*" onchange="handleBannerUpload(event)">
                                 </div>
+                                                <p class="text-[11px] font-medium text-slate-500">Bấm vào ảnh để tải ảnh mới từ máy tính hoặc thay ảnh hiện tại.</p>
                                 <input type="text" id="edit-theme-banner" value="${escapeHtmlAttr(state.theme.bannerUrl || '')}" class="hidden">
                                 ${state.theme.bannerUrl ? `<button onclick="document.getElementById('edit-theme-banner').value=''; document.getElementById('banner-preview-container').innerHTML='<div class=\\'flex flex-col items-center gap-2\\'><i class=\\'ph-fill ph-image text-4xl text-slate-300\\'></i><span class=\\'text-xs font-bold text-slate-400\\'>Bấm để chọn ảnh</span></div>'; this.style.display='none';" class="text-[11px] text-red-500 font-bold bg-red-50 px-3 py-1.5 rounded-lg border border-red-100">Xóa ảnh và dùng màu nền</button>` : ''}
                             </div>
@@ -4688,6 +4897,34 @@ window.performDirectLookup = function() {
             state.theme.bannerColorClass = document.getElementById('edit-theme-color').value.trim();
             saveData(); closeModal('edit-theme-modal'); renderLayout(); showToast("Đã cập nhật giao diện tổng quan!");
         }
+
+        window.handleTopBannerUpload = function(event) {
+            const input = event.target;
+            const file = input.files && input.files[0];
+            if (!file) return;
+            if ((file.type && !file.type.startsWith('image/')) || file.size > 10 * 1024 * 1024) {
+                input.value = '';
+                showToast(file.size > 10 * 1024 * 1024 ? 'Ảnh banner cần nhỏ hơn 10 MB.' : 'Vui lòng chọn tệp ảnh hợp lệ.', 'error');
+                return;
+            }
+
+            const previousBanner = state.theme.topBannerUrl;
+            compressImage(file, (dataUrl) => {
+                try {
+                    state.theme.topBannerUrl = dataUrl;
+                    saveData();
+                    renderLayout();
+                    showToast('Đã cập nhật banner đầu trang.', 'success');
+                } catch (error) {
+                    state.theme.topBannerUrl = previousBanner;
+                    throw error;
+                }
+            }, 2400, 0.9, (error) => {
+                console.error('Không thể tải ảnh banner:', error);
+                input.value = '';
+                showToast(error.message || 'Không thể tải ảnh banner.', 'error');
+            });
+        };
 
         /* --- TÍNH NĂNG XEM LỊCH SỬ HỌC SINH --- */
      window.openStudentHistoryModal = function(id) {
@@ -4757,9 +4994,9 @@ window.performDirectLookup = function() {
                         <!-- Header / Profile -->
                         <div class="px-8 py-6 border-b border-slate-200 bg-white flex items-center justify-between gap-4 shadow-sm z-10 relative">
                             <div class="flex items-center gap-5">
-                                ${getAvatarImg(student.avatarUrl, student.name, "w-16 h-16 ring-4 ring-slate-50 shadow-md")}
+                                ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-16 h-16 ring-4 ring-slate-50 shadow-md")}
                                 <div>
-                                    <div class="font-black text-slate-800 text-2xl tracking-tight mb-1">${student.name}</div>
+                                    <div class="font-black text-slate-800 text-2xl tracking-tight mb-1">${getStudentDisplayName(student)}</div>
                                     <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1 rounded-lg inline-block border border-slate-200">${student.group}</div>
                                 </div>
                             </div>
@@ -5009,7 +5246,7 @@ window.handleClassAvatarUpload = function(event) {
         saveData();
         renderLayout();
         showToast("Đã cập nhật ảnh đại diện lớp!", "success");
-    }, 300, 0.8);
+    }, 1400, 0.9);
 };
 // --- BỔ SUNG CÁC HÀM BỊ THIẾU CHO VÒNG QUAY VÀ BẢNG XẾP HẠNG ---
 
@@ -5427,6 +5664,76 @@ window.playBellSound = function(idx = 0) {
             return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
+        function getTimetableWeekStart(value) {
+            const date = value instanceof Date ? new Date(value) : new Date(`${value || ''}T00:00:00`);
+            if (Number.isNaN(date.getTime())) return getTimetableWeekStart(new Date());
+            const daysSinceMonday = (date.getDay() + 6) % 7;
+            date.setDate(date.getDate() - daysSinceMonday);
+            return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        }
+
+        function getTimetableDateForDay(weekStart, day) {
+            const date = new Date(`${weekStart}T00:00:00`);
+            date.setDate(date.getDate() + Number(day) - 1);
+            return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        }
+
+        function getTimetableReminderDate(weekStart, reminder) {
+            const date = String(reminder && reminder.date || '');
+            return /^\d{4}-\d{2}-\d{2}$/.test(date)
+                ? date
+                : getTimetableDateForDay(weekStart, Number(reminder && reminder.day) || 1);
+        }
+
+        function getTimetableReminderEntries() {
+            return Object.entries(state.timetableReminders || {}).flatMap(([weekStart, entries]) =>
+                (Array.isArray(entries) ? entries : []).map(entry => ({
+                    ...entry,
+                    date: getTimetableReminderDate(weekStart, entry),
+                }))
+            );
+        }
+
+        function formatTimetableDate(value) {
+            const date = new Date(`${value}T00:00:00`);
+            return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('vi-VN');
+        }
+
+        function migrateLegacyTimetableReminders() {
+            if (!state.timetableReminders || typeof state.timetableReminders !== 'object' || Array.isArray(state.timetableReminders)) {
+                state.timetableReminders = {};
+            }
+            for (const [week, reminders] of Object.entries(state.timetableReminders)) {
+                if (!Array.isArray(reminders)) continue;
+                reminders.forEach(reminder => {
+                    if (!reminder.date) reminder.date = getTimetableDateForDay(week, Number(reminder.day) || 1);
+                });
+            }
+            if (!state.dailySchedule) return;
+            const weekStart = getTimetableWeekStart(state.timetable && state.timetable.effectiveDate || new Date());
+            const weekReminders = state.timetableReminders[weekStart] || (state.timetableReminders[weekStart] = []);
+            for (const [dayKey, entries] of Object.entries(state.dailySchedule)) {
+                if (!Array.isArray(entries)) continue;
+                entries.forEach((entry, index) => {
+                    const message = String(entry.reminder || '').trim();
+                    if (!message) return;
+                    const legacyId = `legacy-${dayKey}-${index}-${entry.session || ''}`;
+                    if (weekReminders.some(reminder => reminder.id === legacyId)) return;
+                    weekReminders.push({
+                        id: legacyId,
+                        day: Number(dayKey),
+                        date: getTimetableDateForDay(weekStart, Number(dayKey)),
+                        session: entry.session || '',
+                        period: entry.period || `Tiết ${index + 1}`,
+                        time: entry.time || '',
+                        subject: entry.subject || '',
+                        message,
+                        createdAt: new Date().toISOString()
+                    });
+                });
+            }
+        }
+
         function recordTimetableHistory(reason) {
             if (!Array.isArray(state.timetableHistory)) state.timetableHistory = [];
             if (!state.timetable) state.timetable = {};
@@ -5462,7 +5769,7 @@ window.playBellSound = function(idx = 0) {
                     const entrySession = entry.session || (hour >= 12 ? 'Chiều' : 'Sáng');
                     return entrySession === session;
                 });
-                return entries.length ? entries : defaultRows.map(row => ({ ...row, session, subject: '', teacher: '' }));
+                return entries.length ? entries : defaultRows.map(row => ({ ...row, session, subject: '', teacher: '', reminder: '' }));
             });
             const rowCount = Math.max(defaultRows.length, ...dayRows.map(rows => rows.length));
             return dayRows.map(rows => Array.from({ length: rowCount }, (_, index) => rows[index] || {
@@ -5470,11 +5777,12 @@ window.playBellSound = function(idx = 0) {
                 time: defaultRows[index]?.time || '--:--',
                 session,
                 subject: '',
+                reminder: '',
                 teacher: ''
             }));
         }
 
-        function renderTimetableSession(session, accentClass, schedule = state.dailySchedule, canEdit = !!(state.auth && state.auth.role === 'gvcn')) {
+        function renderTimetableSession(session, accentClass, schedule = state.dailySchedule, canEdit = !!(state.auth && state.auth.role === 'gvcn'), reminderWeek = '') {
             const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
             const dayRows = getTimetableRows(session, schedule);
             const rowCount = dayRows[0].length;
@@ -5485,7 +5793,20 @@ window.playBellSound = function(idx = 0) {
                     <td class="border border-sky-200 p-1"><input aria-label="Giờ tiết ${rowIndex + 1} buổi ${session}" value="${escapeTimetableText(rowTemplate[rowIndex].time || '--:--')}" onchange="updateTimetableSlotMeta('${session}', ${rowIndex}, 'time', this.value)" ${canEdit ? '' : 'disabled'} class="w-full min-w-24 bg-transparent text-center font-bold text-indigo-900 outline-none focus:bg-amber-50 rounded-md px-1 py-2"></td>
                     ${days.map((_, dayIndex) => {
                         const entry = dayRows[dayIndex][rowIndex] || {};
-                        return `<td class="border border-sky-200 p-1"><input aria-label="${session} ${days[dayIndex]} ${rowTemplate[rowIndex].period}" value="${escapeTimetableText(entry.subject)}" onchange="updateTimetableSubject(${dayIndex + 1}, '${session}', ${rowIndex}, this.value)" ${canEdit ? '' : 'disabled'} placeholder="Môn học" class="w-full min-w-20 bg-transparent text-center font-semibold text-slate-800 outline-none focus:bg-amber-50 rounded-md px-1 py-2"></td>`;
+                        const reminderDate = getTimetableDateForDay(reminderWeek, dayIndex + 1);
+                        const slotReminders = ((state.timetableReminders || {})[reminderWeek] || []).filter(reminder =>
+                            Number(reminder.day) === dayIndex + 1 &&
+                            reminder.session === session &&
+                            reminder.period === (entry.period || rowTemplate[rowIndex].period) &&
+                            getTimetableReminderDate(reminderWeek, reminder) === reminderDate
+                        );
+                        return `<td class="border border-sky-200 p-1 align-top">
+                            <button type="button" onclick="openTimetableReminderModal(${dayIndex + 1}, '${session}', ${rowIndex}, '${reminderWeek}', '${escapeInlineJs(entry.subject || '')}', '${escapeInlineJs(entry.period || rowTemplate[rowIndex].period || '')}', '${escapeInlineJs(entry.time || rowTemplate[rowIndex].time || '')}')" class="w-full min-w-24 rounded-lg px-2 py-2 text-center font-semibold ${slotReminders.length ? 'bg-amber-50 text-amber-900 hover:bg-amber-100' : 'bg-transparent text-slate-800 hover:bg-sky-100'}">
+                                ${escapeTimetableText(entry.subject || (canEdit ? 'Chọn môn học' : '—'))}
+                                ${slotReminders.length ? `<span class="mt-1 block text-[10px] font-black text-amber-700">${slotReminders.length} lời nhắc</span>` : `<span class="mt-1 block text-[10px] font-medium text-slate-400">${canEdit ? 'Bấm để nhập lời nhắc' : ''}</span>`}
+                            </button>
+                            ${canEdit ? `<button type="button" onclick="editTimetableSubject(${dayIndex + 1}, '${session}', ${rowIndex}, '${escapeInlineJs(entry.subject || '')}')" class="mt-1 w-full rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100"><i class="ph-bold ph-pencil-simple"></i> Sửa môn</button>` : ''}
+                        </td>`;
                     }).join('')}
                 </tr>
             `).join('');
@@ -5515,7 +5836,7 @@ window.playBellSound = function(idx = 0) {
                 return `<tr>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;padding:5px 4px;">${escapeTimetableText(period.replace(/^Tiết\\s*/i, ''))}</td>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;white-space:nowrap;padding:5px 6px;">${escapeTimetableText(time)}</td>
-                    ${cells.map(cell => `<td style="border:1px solid #8ba8c8;text-align:center;padding:5px 4px;height:25px;">${escapeTimetableText(cell.subject || '')}</td>`).join('')}
+                    ${cells.map(cell => `<td style="border:1px solid #8ba8c8;text-align:center;padding:5px 4px;height:25px;">${escapeTimetableText(cell.subject || '')}${cell.reminder ? `<div style="white-space:pre-wrap;margin-top:3px;color:#92400e;font-size:9px;font-weight:600;">${escapeTimetableText(cell.reminder)}</div>` : ''}</td>`).join('')}
                 </tr>`;
             }).join('');
             return `<section style="margin-top:12px;">
@@ -5607,6 +5928,36 @@ window.playBellSound = function(idx = 0) {
             const displayedSchedule = selectedHistory ? selectedHistory.schedule : state.dailySchedule;
             const displayedEffectiveDate = selectedHistory ? selectedHistory.effectiveDate : state.timetable.effectiveDate;
             const canEdit = !!(state.auth && state.auth.role === 'gvcn' && !selectedHistory);
+            const currentWeek = getTimetableWeekStart(new Date());
+            const reminderWeek = getTimetableWeekStart(state.timetableReminderWeek || currentWeek);
+            state.timetableReminderWeek = reminderWeek;
+            const availableReminderWeeks = [...new Set([currentWeek, reminderWeek, ...Object.keys(state.timetableReminders || {})])].sort().reverse();
+            const reminderWeekOptions = availableReminderWeeks.map(week => `<option value="${week}" ${week === reminderWeek ? 'selected' : ''}>Tuần từ ${formatTimetableDate(week)}</option>`).join('');
+            const dayNames = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+            const weeklyReminders = [...((state.timetableReminders || {})[reminderWeek] || [])]
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            const weeklyRemindersHtml = weeklyReminders.length
+                ? weeklyReminders.map(entry => {
+                    const day = Number(entry.day);
+                    const createdAt = new Date(entry.createdAt || '');
+                    const createdAtLabel = Number.isNaN(createdAt.getTime())
+                        ? ''
+                        : createdAt.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+                    return `
+                    <article class="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm">
+                        <div class="min-w-0 flex-1">
+                            <div class="text-[10px] font-black uppercase tracking-wide text-amber-900">${escapeTimetableText(dayNames[day - 1] || 'Thời khóa biểu')} · ${escapeTimetableText(entry.period || 'Tiết học')} ${escapeTimetableText(entry.session || '')}</div>
+                            <div class="mt-1 text-xs font-black text-slate-800">${escapeTimetableText(entry.subject || 'Chưa nhập môn học')}</div>
+                            <p class="mt-2 whitespace-pre-wrap break-words text-xs font-semibold leading-relaxed text-slate-700">${escapeTimetableText(entry.message || '')}</p>
+                        </div>
+                        <div class="w-24 flex-shrink-0 border-l border-amber-200 pl-2 text-right text-[10px] font-bold leading-relaxed text-amber-950">
+                            <div>${escapeTimetableText(formatTimetableDate(getTimetableReminderDate(reminderWeek, entry)))}</div>
+                            <div>${escapeTimetableText(entry.time || '--:--')}</div>
+                            ${createdAtLabel ? `<div class="mt-1 border-t border-amber-200 pt-1 text-slate-500">Đã nhắc<br>${escapeTimetableText(createdAtLabel)}</div>` : ''}
+                        </div>
+                    </article>
+                `}).join('')
+                : `<div class="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-center text-xs font-semibold text-slate-500">${canEdit ? 'Bấm “Thêm lời nhắc” ở ô môn học để mở khung nhập lớn. Nhấn Enter để lưu, Shift+Enter để xuống dòng.' : 'Tuần này chưa có lời nhắc nào.'}</div>`;
             const historyOptions = [...state.timetableHistory].reverse().map(entry => {
                 const changedAt = new Date(entry.changedAt).toLocaleString('vi-VN');
                 const effectiveDate = entry.effectiveDate
@@ -5646,12 +5997,27 @@ window.playBellSound = function(idx = 0) {
                             </div>
                         </div>
                         <div class="relative z-10 mt-6 space-y-5">
-                            ${renderTimetableSession('Sáng', 'bg-sky-100', displayedSchedule, canEdit)}
-                            ${renderTimetableSession('Chiều', 'bg-indigo-100', displayedSchedule, canEdit)}
+                            <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
+                                <div class="min-w-0 space-y-5">
+                                    ${renderTimetableSession('Sáng', 'bg-sky-100', displayedSchedule, canEdit, reminderWeek)}
+                                    ${renderTimetableSession('Chiều', 'bg-indigo-100', displayedSchedule, canEdit, reminderWeek)}
+                                </div>
+                                <aside class="rounded-2xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white p-4 shadow-sm">
+                                    <h3 class="mb-3 flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800"><i class="ph-fill ph-sparkle text-amber-500 text-lg"></i> Việc cần nhớ trong tuần</h3>
+                                    <select aria-label="Chọn tuần lời nhắc" onchange="selectTimetableReminderWeek(this.value)" class="mb-2 w-full rounded-lg border border-amber-200 bg-white px-2 py-2 text-xs font-bold text-slate-700">
+                                        ${reminderWeekOptions}
+                                    </select>
+                                    <label class="mb-3 flex items-center justify-between gap-2 text-[10px] font-bold text-slate-600">
+                                        Chọn tuần khác
+                                        <input type="date" value="${reminderWeek}" onchange="selectTimetableReminderWeek(this.value)" class="rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700">
+                                    </label>
+                                    <div class="max-h-[42rem] space-y-3 overflow-y-auto pr-1 custom-scrollbar">${weeklyRemindersHtml}</div>
+                                </aside>
+                            </div>
                         </div>
                         <div class="relative z-10 mt-5 rounded-2xl bg-gradient-to-r from-sky-100 to-blue-100 p-3 text-center font-black italic text-indigo-800">Đoàn kết - Nỗ lực - Thành công</div>
                     </div>
-                    ${canEdit ? '<p class="mt-3 text-center text-xs font-semibold text-slate-500">Có thể sửa trực tiếp tên tiết, giờ và môn học; tải Excel để tự điền lịch từ Thứ 2 đến Thứ 7 và tự chia buổi Sáng/Chiều. Tải TKB PDF để lưu hoặc in theo mẫu có logo trường.</p>' : ''}
+                    ${canEdit ? '<p class="mt-3 text-center text-xs font-semibold text-slate-500">Có thể sửa trực tiếp tên tiết, giờ, môn học và nhập lời nhắc dưới từng môn; tải Excel để tự điền lịch từ Thứ 2 đến Thứ 7 và tự chia buổi Sáng/Chiều. Tải TKB PDF để lưu hoặc in theo mẫu có logo trường.</p>' : ''}
                 </div>
             `;
         }
@@ -5659,6 +6025,142 @@ window.playBellSound = function(idx = 0) {
         window.selectTimetableHistory = function(id) {
             state.selectedTimetableHistoryId = id || '';
             renderLayout();
+        };
+
+        window.selectTimetableReminderWeek = function(value) {
+            if (!value) return;
+            state.timetableReminderWeek = getTimetableWeekStart(value);
+            renderLayout();
+        };
+
+        window.addTimetableReminder = function(day, session, rowIndex, input, date) {
+            if (!state.auth || state.auth.role !== 'gvcn') {
+                showToast('Chỉ GVCN mới được thêm lời nhắc thời khóa biểu.', 'error');
+                return false;
+            }
+            if (state.selectedTimetableHistoryId) {
+                showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi thêm lời nhắc.', 'error');
+                return false;
+            }
+            const message = String(input && input.value || '').trim();
+            if (!message) {
+                showToast('Vui lòng nhập nội dung lời nhắc.', 'error');
+                return false;
+            }
+            if (message.length > 500) {
+                showToast('Lời nhắc không được dài quá 500 ký tự.', 'error');
+                return false;
+            }
+            const slot = getTimetableRows(session)[day - 1][rowIndex];
+            const subject = String(slot && slot.subject || '').trim();
+            if (!subject) {
+                showToast('Hãy nhập môn học trước khi thêm lời nhắc.', 'error');
+                return false;
+            }
+
+            const reminderDate = String(date || getTimetableDateForDay(state.timetableReminderWeek || getTimetableWeekStart(new Date()), day));
+            const parsedDate = new Date(`${reminderDate}T00:00:00`);
+            const normalizedDate = Number.isNaN(parsedDate.getTime())
+                ? ''
+                : `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}-${String(parsedDate.getDate()).padStart(2, '0')}`;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(reminderDate) || normalizedDate !== reminderDate || parsedDate.getDay() !== day % 7) {
+                showToast('Ngày nhắc phải đúng thứ của tiết học đã chọn.', 'error');
+                return false;
+            }
+            const weekStart = getTimetableWeekStart(reminderDate);
+            state.timetableReminderWeek = weekStart;
+            if (!state.timetableReminders) state.timetableReminders = {};
+            if (!Array.isArray(state.timetableReminders[weekStart])) state.timetableReminders[weekStart] = [];
+            state.timetableReminders[weekStart].push({
+                id: `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+                day,
+                date: reminderDate,
+                session,
+                period: slot.period || `Tiết ${rowIndex + 1}`,
+                time: slot.time || '--:--',
+                subject,
+                message,
+                createdAt: new Date().toISOString()
+            });
+            saveData();
+            renderLayout();
+            showToast(`Đã lưu lời nhắc ngày ${formatTimetableDate(reminderDate)}.`, 'success');
+            return true;
+        };
+
+        window.openTimetableReminderModal = function(day, session, rowIndex, weekValue, subjectValue, periodValue, timeValue) {
+            if (!state.auth || !state.auth.loggedIn) return showToast('Vui lòng đăng nhập để xem lời nhắc thời khóa biểu.', 'error');
+            const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+            const slot = getTimetableRows(session)[day - 1][rowIndex];
+            const subject = String(subjectValue || slot && slot.subject || '').trim();
+            if (!subject) return showToast('Chưa có môn học ở tiết này.', 'error');
+            const period = String(periodValue || slot && slot.period || `Tiết ${rowIndex + 1}`);
+            const time = String(timeValue || slot && slot.time || '--:--');
+            const canManage = state.auth.role === 'gvcn' && !state.selectedTimetableHistoryId;
+            const weekStart = getTimetableWeekStart(weekValue || state.timetableReminderWeek || new Date());
+            const reminderDate = getTimetableDateForDay(weekStart, day);
+            const reminders = getTimetableReminderEntries().filter(reminder =>
+                reminder.date === reminderDate &&
+                reminder.session === session &&
+                reminder.period === period
+            );
+            const reminderHistory = reminders.length
+                ? reminders.map(reminder => {
+                    const createdAt = new Date(reminder.createdAt || '');
+                    const createdAtLabel = Number.isNaN(createdAt.getTime())
+                        ? ''
+                        : createdAt.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+                    return `<article class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <div class="flex flex-wrap justify-between gap-2 text-xs font-black text-amber-900">
+                            <span>${escapeTimetableText(reminder.time || time)} · ${escapeTimetableText(formatTimetableDate(reminder.date))}</span>
+                            ${createdAtLabel ? `<span>Đã nhắc ${escapeTimetableText(createdAtLabel)}</span>` : ''}
+                        </div>
+                        <p class="mt-2 whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-slate-800">${escapeTimetableText(reminder.message || '')}</p>
+                    </article>`;
+                }).join('')
+                : `<div class="rounded-xl border border-dashed border-slate-300 p-5 text-center text-sm font-medium text-slate-500">Chưa có lời nhắc cho tiết này vào ngày đã chọn.</div>`;
+            document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm animate-fade-in" id="timetable-reminder-modal" onclick="if(event.target===this)closeModal('timetable-reminder-modal')">
+                    <section class="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+                        <header class="flex items-start justify-between gap-4 border-b border-amber-100 bg-gradient-to-r from-amber-50 to-white p-5 md:p-6">
+                            <div>
+                                <div class="text-xs font-black uppercase tracking-widest text-amber-700">Lời nhắc thời khóa biểu</div>
+                                <h3 class="mt-1 text-xl font-black text-slate-900">${escapeTimetableText(subject)}</h3>
+                                <p class="mt-1 text-sm font-semibold text-slate-600">${escapeTimetableText(days[day - 1] || `Thứ ${day + 1}`)} · ${escapeTimetableText(period)} ${escapeTimetableText(session)} · ${escapeTimetableText(time)}</p>
+                                <p class="mt-1 text-xs font-bold text-slate-500">Ngày học: ${escapeTimetableText(formatTimetableDate(reminderDate))}</p>
+                            </div>
+                            <button type="button" onclick="closeModal('timetable-reminder-modal')" aria-label="Đóng" class="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-100"><i class="ph-bold ph-x text-lg"></i></button>
+                        </header>
+                        <div class="space-y-3 overflow-y-auto p-5 md:p-6">
+                            ${canManage ? `<label class="block text-sm font-black text-slate-800">Ngày áp dụng
+                                <input id="timetable-reminder-date" type="date" value="${escapeTimetableText(reminderDate)}" class="mt-2 block w-full rounded-xl border border-amber-300 bg-white px-4 py-3 font-bold text-slate-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-100">
+                            </label>
+                            <label for="timetable-reminder-message" class="block text-sm font-black text-slate-800">Nội dung lời nhắc</label>
+                            <textarea id="timetable-reminder-message" maxlength="500" rows="6" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();saveTimetableReminderFromModal(${day},'${session}',${rowIndex})}" placeholder="Nhập lời nhắc cho ${escapeTimetableText(period)} môn ${escapeTimetableText(subject)}..." class="min-h-40 w-full resize-y rounded-2xl border border-amber-300 bg-amber-50/50 p-4 text-base font-medium leading-relaxed text-slate-800 outline-none placeholder:text-slate-400 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"></textarea>
+                            <p class="text-xs font-medium text-slate-500">Nhấn Enter để lưu nhanh · Shift+Enter để xuống dòng · Tối đa 500 ký tự.</p>
+                            <div class="flex items-center justify-between text-xs font-black text-slate-500"><span>Lời nhắc trong ngày này (${reminders.length})</span><span id="timetable-reminder-char-count">0/500</span></div>` : `<p class="rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-900">Lời nhắc của tiết học ngày ${escapeTimetableText(formatTimetableDate(reminderDate))}</p>`}
+                            <div class="space-y-2">${reminderHistory}</div>
+                        </div>
+                        <footer class="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 p-4">
+                            <button type="button" onclick="closeModal('timetable-reminder-modal')" class="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-100">Đóng</button>
+                            ${canManage ? `<button type="button" onclick="saveTimetableReminderFromModal(${day},'${session}',${rowIndex})" class="rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white shadow-sm hover:bg-amber-700"><i class="ph-bold ph-paper-plane-tilt mr-1"></i> Lưu lời nhắc</button>` : ''}
+                        </footer>
+                    </section>
+                </div>
+            `;
+            const textarea = document.getElementById('timetable-reminder-message');
+            if (textarea) {
+                textarea.addEventListener('input', () => {
+                    document.getElementById('timetable-reminder-char-count').textContent = `${textarea.value.length}/500`;
+                });
+                textarea.focus();
+            }
+        };
+
+        window.saveTimetableReminderFromModal = function(day, session, rowIndex) {
+            const textarea = document.getElementById('timetable-reminder-message');
+            const date = document.getElementById('timetable-reminder-date').value;
+            if (window.addTimetableReminder(day, session, rowIndex, textarea, date)) closeModal('timetable-reminder-modal');
         };
 
         window.updateTimetableEffectiveDate = function(value) {
@@ -5693,6 +6195,14 @@ window.playBellSound = function(idx = 0) {
             saveData();
         };
 
+        window.editTimetableSubject = function(day, session, rowIndex, currentSubject) {
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
+            const subject = prompt('Nhập tên môn học:', currentSubject || '');
+            if (subject === null) return;
+            window.updateTimetableSubject(day, session, rowIndex, subject);
+            renderLayout();
+        };
+
         window.updateTimetableSlotMeta = function(session, rowIndex, field, value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
             if (state.selectedTimetableHistoryId) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
@@ -5710,7 +6220,7 @@ window.playBellSound = function(idx = 0) {
                 });
                 const templates = getTimetableRows(session)[day - 1];
                 while (entries.length <= rowIndex) {
-                    const entry = { ...templates[entries.length], session, subject: '', teacher: '' };
+                    const entry = { ...templates[entries.length], session, subject: '', teacher: '', reminder: '' };
                     state.dailySchedule[day].push(entry);
                     entries.push(entry);
                 }
@@ -5744,7 +6254,8 @@ window.playBellSound = function(idx = 0) {
                     time: '--:--',
                     session,
                     subject: '',
-                    teacher: ''
+                    teacher: '',
+                    reminder: ''
                 });
             }
             saveData();
@@ -6057,7 +6568,7 @@ window.parseExcelToDailySchedule = function(rows) {
                     <form class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-5" onsubmit="confirmPointAction(event)">
                         <div>
                             <h3 class="text-xl font-black text-slate-800">${type === 'add' ? 'Cộng' : 'Trừ'} ${Number(points)} điểm</h3>
-                            <p class="text-sm text-slate-500 mt-1">${escapeHtmlAttr(student.name)} · ${escapeHtmlAttr(category)}</p>
+                            <p class="text-sm text-slate-500 mt-1">${getStudentDisplayName(student)} · ${escapeHtmlAttr(category)}</p>
                         </div>
                         <div>
                             <label for="point-action-reason" class="block text-sm font-bold text-slate-700 mb-2">Lý do ghi vào Sổ theo dõi <span class="text-red-500">*</span></label>
@@ -6203,8 +6714,8 @@ window.parseExcelToDailySchedule = function(rows) {
                         </div>
                         <div class="p-6">
                             <div class="flex flex-col items-center text-center mb-5">
-                                ${getAvatarImg(student.avatarUrl, student.name, 'w-24 h-24 ring-4 ring-indigo-50 shadow')}
-                                <h4 class="mt-3 text-xl font-black text-slate-800">${escapeHtmlAttr(student.name)}</h4>
+                                ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), 'w-24 h-24 ring-4 ring-indigo-50 shadow')}
+                                <h4 class="mt-3 text-xl font-black text-slate-800">${getStudentDisplayName(student)}</h4>
                             </div>
                             <dl class="grid grid-cols-2 gap-3">
                                 ${details.map(([label, value]) => `<div class="rounded-xl bg-slate-50 p-3"><dt class="text-[10px] font-bold uppercase text-slate-400">${label}</dt><dd class="mt-1 text-sm font-bold text-slate-700">${escapeHtmlAttr(value)}</dd></div>`).join('')}
@@ -6383,9 +6894,9 @@ window.parseExcelToDailySchedule = function(rows) {
                 ? unassignedStudents.map(student => `
                     <div onclick="${canManageSeating ? `selectStudentForSeat('${student.id}')` : ''}" class="flex items-center gap-3 p-3 bg-white border ${String(state.selectedSeatingStudentId) === String(student.id) ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-slate-100'} rounded-2xl mb-3 shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:shadow-[0_5px_15px_rgba(79,70,229,0.08)] hover:border-indigo-200 transition-all group ${canManageSeating ? 'cursor-grab' : 'cursor-default'}" ${canManageSeating ? `draggable="true" ondragstart="onDragStartStudent(event, '${student.id}')" ondragend="onDragEndStudent(event)"` : ''}>
                         <div class="w-5 h-8 flex items-center justify-center opacity-30 group-hover:opacity-100 group-hover:text-indigo-500 transition-colors"><i class="ph-bold ph-dots-six-vertical text-lg"></i></div>
-                        ${getAvatarImg(student.avatarUrl, student.name, "w-10 h-10 pointer-events-none ring-2 ring-slate-50 shadow-sm")}
+                        ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-10 h-10 pointer-events-none ring-2 ring-slate-50 shadow-sm")}
                         <div class="flex-1 min-w-0 pointer-events-none">
-                            <div class="text-sm font-bold text-slate-800 truncate mb-0.5">${escapeHtmlAttr(student.name)}</div>
+                            <div class="text-sm font-bold text-slate-800 truncate mb-0.5">${getStudentDisplayName(student)}</div>
                             <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5"><i class="ph-fill ph-users text-indigo-400"></i> ${escapeHtmlAttr(student.group || 'Chưa phân tổ')}</div>
                         </div>
                     </div>
@@ -6426,10 +6937,10 @@ window.parseExcelToDailySchedule = function(rows) {
                     return `
                         <button type="button" class="h-24 w-full bg-white border ${borderColor} rounded-2xl shadow-sm ${hoverClass} relative group ${canManageSeating ? 'cursor-pointer' : 'cursor-default'} flex flex-col items-center justify-center transition-all duration-300 transform hover:-translate-y-1 overflow-hidden" onclick="openSeatStudentDetails('${seatId}')">
                             <div class="absolute top-0 left-0 w-full h-1.5 ${topBar} opacity-80"></div>
-                            ${getAvatarImg(student.avatarUrl, student.name, "w-10 h-10 mt-1 mb-1.5 pointer-events-none ring-2 ring-slate-50 shadow-sm")}
+                            ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-10 h-10 mt-1 mb-1.5 pointer-events-none ring-2 ring-slate-50 shadow-sm")}
                             <div class="flex items-center gap-1.5 pointer-events-none px-2 w-full justify-center">
                                 <span class="w-1.5 h-1.5 rounded-full ${dotColor}"></span>
-                                <span class="text-[10px] font-bold text-slate-700 text-center truncate">${student.name.trim().split(/\s+/).map((part, index, nameParts) => index === nameParts.length - 1 ? part : `${part.charAt(0)}.`).join(' ')}</span>
+                                <span class="text-[10px] font-bold text-slate-700 text-center truncate">${getStudentDisplayName(student)}</span>
                             </div>
                         </button>
                     `;
@@ -6834,9 +7345,9 @@ window.parseExcelToDailySchedule = function(rows) {
                     <div class="bg-white rounded-[2rem] p-6 shadow-sm border border-rose-200 relative group transition-all hover:shadow-xl hover:-translate-y-1 flex flex-col h-full">
                         <div class="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -mr-4 -mt-4 z-0 opacity-50 pointer-events-none"></div>
                         <div class="relative z-10 flex items-start gap-4 mb-4">
-                            ${getAvatarImg(student.avatarUrl, student.name, "w-14 h-14 ring-4 ring-rose-50 shadow-sm object-cover")}
+                            ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-14 h-14 ring-4 ring-rose-50 shadow-sm object-cover")}
                             <div class="flex-1 min-w-0">
-                                <h3 class="text-lg font-black text-slate-800 truncate">${student.name}</h3>
+                                <h3 class="text-lg font-black text-slate-800 truncate">${getStudentDisplayName(student)}</h3>
                                 <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">${student.group}</div>
                             </div>
                             <button onclick="openEditCompanionModal(${c.id})" class="text-slate-400 hover:text-blueAccent transition-colors bg-slate-50 p-2 rounded-full border border-slate-100" title="Chỉnh sửa / Xóa bớt lỗi"><i class="ph-fill ph-pencil-simple text-lg"></i></button>
@@ -6894,7 +7405,7 @@ window.parseExcelToDailySchedule = function(rows) {
             const companion = id ? state.companions.find(c => c.id === id) : { studentId: '', startDate: today, issue: '', measures: '' };
             
             const studentOptions = state.students.map(s => 
-                `<option value="${s.id}" ${companion.studentId == s.id ? 'selected' : ''}>${s.name} (${s.group})</option>`
+                `<option value="${s.id}" ${companion.studentId == s.id ? 'selected' : ''}>${getStudentDisplayName(s)} (${s.group})</option>`
             ).join('');
 
             const modalHtml = `
@@ -7190,6 +7701,7 @@ window.parseExcelToDailySchedule = function(rows) {
                 state.currentTab = 'tong-quan';
                 state.gradeRows = [];
                 renderLayout();
+                window.startTimetableReminderSync();
                 let gradeLoadError = '';
                 try {
                     await window.loadGrades();
@@ -7444,7 +7956,7 @@ window.parseExcelToDailySchedule = function(rows) {
             delete snapshot.cloudMigratedAccounts;
             delete snapshot.cloudAccountMigrationErrors;
             localStorage.setItem('classManagerData', JSON.stringify(snapshot));
-            if (state.auth && state.auth.role === 'gvcn') {
+            if (state.auth && state.auth.loggedIn && state.auth.role === 'gvcn') {
                 clearTimeout(window.cloudSaveTimer);
                 window.cloudSaveTimer = setTimeout(() => {
                     window.persistCloudClass().catch(error => {
@@ -7454,6 +7966,7 @@ window.parseExcelToDailySchedule = function(rows) {
                 }, 400);
             }
         };
+        if (bannerTitleMigrated) window.saveData();
         
         renderLayout();
         window.initializeCloudSession().then(async isAuthenticated => {
@@ -7467,6 +7980,7 @@ window.parseExcelToDailySchedule = function(rows) {
             }
             state.currentTab = 'tong-quan';
             renderLayout();
+            window.startTimetableReminderSync();
             await window.loadGrades();
         }).catch(error => {
             console.error('Không thể khôi phục phiên online:', error);

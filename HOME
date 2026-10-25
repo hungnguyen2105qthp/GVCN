@@ -3478,7 +3478,7 @@ window.openEditGroupModal = function(id) {
                                 <input type="file" id="excel-upload-input" class="hidden" accept=".xlsx, .xls, .csv" onchange="handleExcelUpload(event)">
                                 <div class="p-4 bg-white rounded-full shadow-sm mb-4 group-hover:scale-110 transition-transform"><i class="ph-fill ph-upload-simple text-3xl text-blueAccent"></i></div>
                                 <div class="font-bold text-slate-700 text-base mb-1">Bấm để chọn file Excel (.xlsx)</div>
-                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Cột A: Họ Tên | B: Giới tính | C: Tổ | D: Vai trò<br>E: Mục tiêu | F: Năng khiếu | G: Ngày sinh | H: Lưu trú<br><span class="text-orange-600">I: Dân tộc | J: Đoàn viên | K: Học lực năm trước | L: Rèn luyện năm trước</span></div>
+                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Tự nhận diện cột theo tiêu đề như: Mã định danh, Họ tên, Điểm, Ngày sinh, Giới tính.<br>Nếu file không có tiêu đề, vui lòng dùng đúng thứ tự cột trong File mẫu.</div>
                             </div>
                             
                             <div class="relative py-2"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div><div class="relative flex justify-center"><span class="bg-white px-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest">Hoặc dán văn bản</span></div></div>
@@ -3511,25 +3511,108 @@ window.openEditGroupModal = function(id) {
         }
 
       function processImportRows(rows) {
+            const normalizeHeader = value => (value || '').toString().trim().toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd')
+                .replace(/[^a-z0-9]/g, '');
+            const headerAliases = {
+                code: ['madinhdanh', 'mahosinh', 'mahs', 'matracuu', 'maso', 'studentid', 'studentcode', 'identifier'],
+                name: ['hoten', 'hovaten', 'tenhocsinh', 'tensinhvien', 'fullname', 'studentname'],
+                points: ['diem', 'diemso', 'tongdiem', 'diemhientai', 'points', 'score'],
+                dob: ['ngaysinh', 'ngaythangnamsinh', 'dob', 'dateofbirth', 'birthdate'],
+                gender: ['gioitinh', 'gender', 'sex'],
+                group: ['to', 'toithidua', 'nhom'],
+                role: ['vaitro'],
+                goal: ['muctieu', 'muctieuphandau'],
+                talent: ['nangkhieu'],
+                boardingType: ['hinhthucluutru', 'luutru'],
+                ethnicity: ['dantoc'],
+                isUnionMember: ['doanvien'],
+                prevAcademic: ['hoclucnamtruoc'],
+                prevConduct: ['renluyennamtruoc']
+            };
+            const matchesHeader = (cell, aliases) => aliases.some(alias => cell.startsWith(alias));
+            const headerRowIndex = rows.findIndex(row => {
+                const normalizedCells = row.map(normalizeHeader);
+                const hasName = normalizedCells.some(cell => matchesHeader(cell, headerAliases.name));
+                const recognizedCount = Object.values(headerAliases)
+                    .filter(aliases => normalizedCells.some(cell => matchesHeader(cell, aliases))).length;
+                return hasName && recognizedCount > 1;
+            });
+            const columnIndexes = {};
+            if (headerRowIndex >= 0) {
+                const header = rows[headerRowIndex].map(normalizeHeader);
+                Object.entries(headerAliases).forEach(([field, aliases]) => {
+                    columnIndexes[field] = header.findIndex(cell => matchesHeader(cell, aliases));
+                });
+                if (columnIndexes.name < 0) {
+                    showToast("Không tìm thấy cột Họ tên trong file.", "error");
+                    return;
+                }
+            } else {
+                Object.assign(columnIndexes, {
+                    name: 0, gender: 1, group: 2, role: 3, goal: 4, talent: 5,
+                    dob: 6, boardingType: 7, ethnicity: 8, isUnionMember: 9,
+                    prevAcademic: 10, prevConduct: 11
+                });
+            }
+
+            const getValue = (row, field) => {
+                const index = columnIndexes[field];
+                return index >= 0 && index !== undefined && row[index] != null
+                    ? row[index].toString().trim()
+                    : '';
+            };
+            const toDateInputValue = value => {
+                if (value instanceof Date && !Number.isNaN(value.getTime())) {
+                    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+                }
+                if (typeof value === 'number' && window.XLSX && XLSX.SSF) {
+                    const date = XLSX.SSF.parse_date_code(value);
+                    if (date) return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+                }
+                const text = (value || '').toString().trim();
+                let match = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+                if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+                match = text.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{4})$/);
+                if (match) return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+                return text;
+            };
+            const getGender = row => {
+                const gender = getValue(row, 'gender');
+                const normalized = normalizeHeader(gender);
+                if (['nu', 'female', 'f'].includes(normalized)) return 'Nữ';
+                if (['nam', 'male', 'm'].includes(normalized)) return 'Nam';
+                return gender || 'Nam';
+            };
+
             let addedCount = 0;
             let currentId = state.students.length > 0 ? Math.max(...state.students.map(s => s.id)) + 1 : 1;
-            rows.forEach((row, i) => {
-                if (i === 0 && row[0] && row[0].toString().toLowerCase().includes('tên')) return;
-                const name = (row[0] || '').toString().trim(); if (!name) return;
-                state.students.push({ 
-                    id: currentId++, name: name, 
-                    gender: (row[1] || '').toString().trim() || 'Nam', 
-                    group: (row[2] || '').toString().trim() || 'Tổ 1', 
-                    role: (row[3] || '').toString().trim() || '', 
-                    goal: (row[4] || '').toString().trim() || '', 
-                    talent: (row[5] || '').toString().trim() || '', 
-                    dob: (row[6] || '').toString().trim() || '',
-                    boardingType: (row[7] || '').toString().trim() || 'Ngoại trú',
-                    ethnicity: (row[8] || '').toString().trim() || 'Kinh',
-                    isUnionMember: (row[9] || '').toString().trim() || 'Chưa',
-                    prevAcademic: (row[10] || '').toString().trim() || '',
-                    prevConduct: (row[11] || '').toString().trim() || '',
-                    avatarUrl: '', points: 0, stars: 0, code: generateUniqueCode(), history: [] 
+            rows.forEach((row, index) => {
+                if (index === headerRowIndex || !row) return;
+                const name = getValue(row, 'name');
+                if (!name) return;
+                const importedPoints = getValue(row, 'points');
+                const points = importedPoints === '' ? 0 : Number(importedPoints.replace(',', '.'));
+                const suppliedCode = getValue(row, 'code');
+                state.students.push({
+                    id: currentId++,
+                    name,
+                    gender: getGender(row),
+                    group: getValue(row, 'group') || 'Tổ 1',
+                    role: getValue(row, 'role'),
+                    goal: getValue(row, 'goal'),
+                    talent: getValue(row, 'talent'),
+                    dob: toDateInputValue(row[columnIndexes.dob]),
+                    boardingType: getValue(row, 'boardingType') || 'Ngoại trú',
+                    ethnicity: getValue(row, 'ethnicity') || 'Kinh',
+                    isUnionMember: getValue(row, 'isUnionMember') || 'Chưa',
+                    prevAcademic: getValue(row, 'prevAcademic'),
+                    prevConduct: getValue(row, 'prevConduct'),
+                    avatarUrl: '',
+                    points: Number.isFinite(points) ? points : 0,
+                    stars: Number.isFinite(points) ? points : 0,
+                    code: suppliedCode || generateUniqueCode(),
+                    history: []
                 });
                 addedCount++;
             });

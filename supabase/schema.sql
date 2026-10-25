@@ -28,12 +28,27 @@ create table if not exists public.grades (
   regular_1 numeric(3, 1) check (regular_1 between 0 and 10),
   regular_2 numeric(3, 1) check (regular_2 between 0 and 10),
   regular_3 numeric(3, 1) check (regular_3 between 0 and 10),
+  regular_4 numeric(3, 1) check (regular_4 between 0 and 10),
+  regular_5 numeric(3, 1) check (regular_5 between 0 and 10),
   midterm numeric(3, 1) check (midterm between 0 and 10),
   final numeric(3, 1) check (final between 0 and 10),
+  reported_average numeric(3, 1) check (reported_average between 0 and 10),
   comment text not null default '',
   updated_at timestamptz not null default now(),
   unique (class_id, student_id, subject, academic_year, semester)
 );
+
+alter table public.grades
+  add column if not exists regular_4 numeric(3, 1)
+  check (regular_4 between 0 and 10);
+
+alter table public.grades
+  add column if not exists regular_5 numeric(3, 1)
+  check (regular_5 between 0 and 10);
+
+alter table public.grades
+  add column if not exists reported_average numeric(3, 1)
+  check (reported_average between 0 and 10);
 
 create table if not exists public.class_reminders (
   id uuid primary key default gen_random_uuid(),
@@ -151,6 +166,7 @@ grant insert, update, delete on public.class_data to authenticated;
 grant insert, update on public.grades to authenticated;
 revoke all on function public.current_class_id(), public.current_role(), public.current_student_id() from public, anon;
 grant execute on function public.current_class_id(), public.current_role(), public.current_student_id() to authenticated;
+notify pgrst, 'reload schema';
 
 -- After creating the GVCN Auth user, run supabase/create-gvcn-profile.sql
 -- separately to create its application profile.

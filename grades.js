@@ -3,6 +3,8 @@
     ["regular_1", "1"],
     ["regular_2", "2"],
     ["regular_3", "3"],
+    ["regular_4", "4"],
+    ["regular_5", "5"],
     ["midterm", "Giữa kỳ"],
     ["final", "Cuối kỳ"],
   ];
@@ -20,6 +22,8 @@
       [record.regular_1, 1],
       [record.regular_2, 1],
       [record.regular_3, 1],
+      [record.regular_4, 1],
+      [record.regular_5, 1],
       [record.midterm, 2],
       [record.final, 3],
     ].filter(([score]) => score !== null && score !== undefined && score !== "");
@@ -37,6 +41,314 @@
     };
   }
 
+  function normalizeStudentKey(value) {
+    return normalizeHeader(value);
+  }
+
+  function normalizeHeader(value) {
+    return String(value ?? "")
+      .replace(/[\u0110\u0111]/g, "d")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("vi")
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  function findScoreColumns(rows, headerRowIndex, worksheet) {
+    const header = rows[headerRowIndex] || [];
+    const expandedHeader = [...header];
+    for (const merge of worksheet["!merges"] || []) {
+      if (merge.s.r <= headerRowIndex && merge.e.r >= headerRowIndex) {
+        const value = header[merge.s.c];
+        if (value !== undefined && value !== null) {
+          for (let column = merge.s.c; column <= merge.e.c; column++) expandedHeader[column] = value;
+        }
+      }
+    }
+    const normalizedHeaders = expandedHeader.map(normalizeHeader);
+    const midterm = normalizedHeaders.findIndex(value => value.includes("ddggk") || value.includes("giuaky"));
+    const final = normalizedHeaders.findIndex(value => value.includes("ddgck") || value.includes("cuoiky"));
+    const reportedAverage = normalizedHeaders.findIndex(value =>
+      value.includes("dtbmhk") || value.includes("diemtrungbinhhocky") || value.includes("diemtrungbinh")
+    );
+    const comment = normalizedHeaders.findIndex(value => value.includes("nhanxet") || value.includes("comment"));
+    const regular = [1, 2, 3, 4, 5].map(number => {
+      const subheaderIndex = headerRowIndex + 1;
+      const subheader = rows[subheaderIndex] || [];
+      return subheader.findIndex((value, column) =>
+        Number(value) === number && normalizedHeaders[column].includes("ddgtx")
+      );
+    });
+
+    if (midterm < 0 || final < 0 || regular.slice(0, 3).some(column => column < 0)) {
+      throw new Error("Không nhận diện được đủ cột điểm. Cần có ĐĐGtx 1–3, ĐĐGgk và ĐĐGck; ĐĐGtx 4–5 là tùy chọn.");
+    }
+    return { regular, midterm, final, reportedAverage, comment };
+  }
+
+  function parseGradeFile(file) {
+    if (!window.XLSX) throw new Error("Thư viện đọc Excel chưa tải xong. Vui lòng tải lại trang và thử lại.");
+    return file.arrayBuffer().then(buffer => {
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!worksheet) throw new Error("File Excel không có trang tính.");
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+      const headerRowIndex = rows.findIndex((row, index) => {
+        const cells = row.map(normalizeHeader);
+        const hasIdentity = cells.some(value => value.includes("madinhdanh")) && cells.some(value => value.includes("hovaten"));
+        const hasStudentId = cells.some(value => value === "stt");
+        return hasIdentity && (hasStudentId || index === 0);
+      });
+      if (headerRowIndex < 0) throw new Error("Không tìm thấy hàng tiêu đề có “Mã định danh” và “Họ và tên”.");
+
+      const header = rows[headerRowIndex].map(normalizeHeader);
+      const idColumn = header.findIndex(value => value.includes("madinhdanh"));
+      const nameColumn = header.findIndex(value => value.includes("hovaten"));
+      const scoreColumns = findScoreColumns(rows, headerRowIndex, worksheet);
+      const students = state.students || [];
+      const byKey = new Map();
+      for (const student of students) {
+        for (const key of [student.identifier, student.code]) {
+          const normalized = normalizeStudentKey(key);
+          if (!normalized) continue;
+          const matches = byKey.get(normalized) || [];
+          if (!matches.some(item => String(item.id) === String(student.id))) matches.push(student);
+          byKey.set(normalized, matches);
+        }
+      }
+
+      const imported = [];
+      const seenStudents = new Set();
+      const seenIdentifiers = new Set();
+      const reservedCodes = new Set(students.map(student => normalizeStudentKey(student.code)).filter(Boolean));
+      let nextStudentId = students.length
+        ? Math.max(...students.map(student => Number(student.id) || 0)) + 1
+        : 1;
+      for (let index = headerRowIndex + 2; index < rows.length; index++) {
+        const row = rows[index];
+        const identifier = row[idColumn];
+        const name = String(row[nameColumn] ?? "").trim();
+        if (!name) continue;
+
+        const identifierMatches = identifier === "" || identifier === null || identifier === undefined
+          ? []
+          : byKey.get(normalizeStudentKey(identifier)) || [];
+        const normalizedIdentifier = normalizeStudentKey(identifier);
+        if (normalizedIdentifier && seenIdentifiers.has(normalizedIdentifier)) {
+          throw new Error(`Mã định danh “${identifier}” xuất hiện nhiều lần trong file. Vui lòng kiểm tra trước khi nhập.`);
+        }
+        if (identifierMatches.length > 1) {
+          throw new Error(`Mã định danh “${identifier}” đang gắn với nhiều học sinh. Vui lòng kiểm tra danh sách lớp.`);
+        }
+        let student = identifierMatches.length === 1 ? identifierMatches[0] : null;
+        if (student && normalizeStudentKey(student.name) !== normalizeStudentKey(name)) {
+          throw new Error(`Mã định danh “${identifier}” khớp với học sinh “${student.name}”, không phải “${name}”. Vui lòng kiểm tra file.`);
+        }
+        if (!student) {
+          const nameKey = normalizeStudentKey(name);
+          const nameMatches = students.filter(item =>
+            normalizeStudentKey(item.name) === nameKey && !seenStudents.has(String(item.id))
+          );
+          if (nameMatches.length === 1) student = nameMatches[0];
+          else if (nameMatches.length > 1) {
+            throw new Error(`Có nhiều học sinh cùng tên “${name}”. File cần có mã định danh khớp để ghép đúng học sinh.`);
+          }
+        }
+        const isNewStudent = !student;
+        if (isNewStudent) {
+          const importedCode = identifier === "" || identifier === null || identifier === undefined
+            ? ""
+            : String(identifier).trim();
+          if (importedCode && byKey.has(normalizeStudentKey(importedCode))) {
+            throw new Error(`Mã định danh “${importedCode}” đã thuộc học sinh khác. Vui lòng kiểm tra tên và mã trong file.`);
+          }
+          let code = generateUniqueCode();
+          let codeAttempts = 0;
+          while (reservedCodes.has(normalizeStudentKey(code)) && codeAttempts < 100) {
+            code = generateUniqueCode();
+            codeAttempts++;
+          }
+          if (reservedCodes.has(normalizeStudentKey(code))) {
+            throw new Error("Không tạo được mã tra cứu duy nhất cho học sinh mới. Vui lòng thử nhập lại file.");
+          }
+          reservedCodes.add(normalizeStudentKey(code));
+          student = {
+            id: nextStudentId++,
+            name,
+            identifier: importedCode,
+            code,
+            gender: "",
+            group: "Tổ 1",
+            role: "",
+            goal: "",
+            talent: "",
+            dob: "",
+            boardingType: "Ngoại trú",
+            ethnicity: "Kinh",
+            isUnionMember: "Chưa",
+            prevAcademic: "",
+            prevConduct: "",
+            avatarUrl: "",
+            points: 0,
+            stars: 0,
+            history: [],
+          };
+          const importedKey = normalizeStudentKey(student.code);
+          if (importedKey) {
+            const matches = byKey.get(importedKey) || [];
+            matches.push(student);
+            byKey.set(importedKey, matches);
+          }
+        }
+        if (normalizedIdentifier) seenIdentifiers.add(normalizedIdentifier);
+        if (seenStudents.has(String(student.id))) {
+          throw new Error(`Học sinh “${name}” xuất hiện nhiều lần trong file. Vui lòng kiểm tra trước khi nhập.`);
+        }
+        seenStudents.add(String(student.id));
+
+        const values = scoreColumns.regular.map(column => column < 0 ? "" : row[column]);
+        values.push(row[scoreColumns.midterm], row[scoreColumns.final]);
+        const fields = [...GRADE_COLUMNS.slice(0, 5).map(([field]) => field), "midterm", "final"];
+        const grades = {};
+        values.forEach((rawValue, valueIndex) => {
+          if (rawValue === "" || rawValue === null || rawValue === undefined) return;
+          const value = typeof rawValue === "string" ? Number(rawValue.trim().replace(",", ".")) : Number(rawValue);
+          if (!Number.isFinite(value) || value < 0 || value > 10) {
+            throw new Error(`Điểm của “${name}” phải là số từ 0 đến 10.`);
+          }
+          grades[fields[valueIndex]] = value;
+        });
+        const averageValue = scoreColumns.reportedAverage >= 0 ? row[scoreColumns.reportedAverage] : "";
+        if (averageValue !== "" && averageValue !== null && averageValue !== undefined) {
+          const value = typeof averageValue === "string"
+            ? Number(averageValue.trim().replace(",", "."))
+            : Number(averageValue);
+          if (!Number.isFinite(value) || value < 0 || value > 10) {
+            throw new Error(`Điểm trung bình của “${name}” phải là số từ 0 đến 10.`);
+          }
+          grades.reported_average = value;
+        }
+        const commentValue = scoreColumns.comment >= 0 ? String(row[scoreColumns.comment] ?? "").trim() : "";
+        if (commentValue) grades.comment = commentValue;
+        imported.push({
+          student,
+          grades,
+          isNewStudent,
+          identifier: identifier === "" || identifier === null || identifier === undefined
+            ? ""
+            : String(identifier).trim(),
+        });
+      }
+      if (!imported.length) throw new Error("Không ghép được học sinh nào trong file với danh sách lớp.");
+      if (!imported.some(item => Object.keys(item.grades).length)) {
+        throw new Error("File không có điểm nào để nhập.");
+      }
+      return { imported, fileName: file.name };
+    });
+  }
+
+  window.prepareGradeImport = async function (input) {
+    const status = document.getElementById("grade-import-status");
+    const file = input.files && input.files[0];
+    if (!file || !status) return;
+    status.innerHTML = `<p class="text-sm font-semibold text-slate-600">Đang đọc file ${escapeHtmlText(file.name)}...</p>`;
+    try {
+      const pending = await parseGradeFile(file);
+      window.pendingGradeImport = pending;
+      status.innerHTML = `<div class="space-y-2 text-sm">
+        <p class="font-bold text-emerald-800">Đã nhận diện ${pending.imported.length} học sinh trong “${escapeHtmlText(pending.fileName)}”. Học sinh mới: ${pending.imported.filter(item => item.isNewStudent).length}. Thứ tự trên bảng sẽ theo thứ tự trong file.</p>
+        <p class="text-slate-600">Điểm thành phần và điểm trung bình trong file được lưu riêng. Điểm trống không xóa điểm đã có. Học sinh chưa có trong lớp sẽ được thêm hồ sơ mới.</p>
+        <button type="button" onclick="importGradeFile()" class="rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white hover:bg-emerald-800">Nhập điểm và lọc bảng</button>
+      </div>`;
+    } catch (error) {
+      window.pendingGradeImport = null;
+      status.innerHTML = `<p class="text-sm font-bold text-red-700">${escapeHtmlText(error.message || "Không thể đọc file Excel.")}</p>`;
+    }
+  };
+
+  window.downloadGradeTemplate = function () {
+    if (!window.XLSX) {
+      showToast("Thư viện Excel chưa tải xong. Vui lòng tải lại trang và thử lại.", "error");
+      return;
+    }
+    try {
+      const rows = [
+        ["STT", "Mã định danh Bộ GD&ĐT", "Họ và tên", "ĐĐGtx", "", "", "", "", "ĐĐGgk", "ĐĐGck", "ĐTBmhk", "Nhận xét"],
+        ["", "", "", "1", "2", "3", "4", "5", "", "", "", ""],
+      ];
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      worksheet["!merges"] = [{ s: { r: 0, c: 3 }, e: { r: 0, c: 7 } }];
+      worksheet["!cols"] = [
+        { wch: 7 }, { wch: 24 }, { wch: 28 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 42 },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Nhap diem");
+      XLSX.writeFile(workbook, "Mau_nhap_diem_ca_lop.xlsx");
+    } catch (error) {
+      console.error("Không thể tạo file mẫu nhập điểm:", error);
+      showToast(error.message || "Không thể tải file mẫu nhập điểm.", "error");
+    }
+  };
+
+  window.importGradeFile = async function () {
+    const pending = window.pendingGradeImport;
+    if (!pending || !isTeacher()) {
+      showToast("Chỉ GVCN mới được nhập điểm từ file.", "error");
+      return;
+    }
+    try {
+      const newStudents = pending.imported
+        .filter(item => item.isNewStudent)
+        .map(item => item.student);
+      const nicknameChanged = updateImportedDuplicateNicknames(pending.imported, state.students || []);
+      const identifierChanged = pending.imported.some(({ student, identifier }) =>
+        identifier && student.identifier !== identifier
+      );
+      pending.imported.forEach(({ student, identifier }) => {
+        if (identifier) student.identifier = identifier;
+      });
+      if (newStudents.length) state.students.push(...newStudents);
+      if (newStudents.length || nicknameChanged || identifierChanged) {
+        saveData();
+        await window.persistCloudClass();
+      }
+      const context = selectedContext();
+      const records = pending.imported.map(({ student, grades }) => {
+        const existing = gradeFor(student.id, context);
+        const record = {
+          ...existing,
+          class_id: state.cloudProfile.class_id,
+          student_id: String(student.id),
+          ...context,
+          ...grades,
+          updated_at: new Date().toISOString(),
+        };
+        delete record.id;
+        return record;
+      });
+      const client = await window.cloudReady;
+      const { omittedAverage } = await upsertGradeRecords(client, records);
+      state.gradeImportOrder = pending.imported.map(({ student }) => String(student.id));
+      window.pendingGradeImport = null;
+      await window.loadGrades();
+      showToast(
+        omittedAverage
+          ? `Đã nhập điểm cho ${records.length} học sinh. Database chưa có cột ĐTB từ file nên hệ thống sẽ tự tính; hãy chạy lại supabase/schema.sql để lưu cột này.`
+          : `Đã nhập điểm cho ${records.length} học sinh theo thứ tự file.`,
+        "success"
+      );
+    } catch (error) {
+      console.error("Không thể nhập điểm từ file:", error);
+      showToast(gradeSaveErrorMessage(error, "Không thể nhập điểm từ file."), "error");
+    }
+  };
+
+  window.clearGradeImportOrder = function () {
+    state.gradeImportOrder = null;
+    renderLayout();
+  };
+
   function gradeFor(studentId, context) {
     return (state.gradeRows || []).find(row =>
       String(row.student_id) === String(studentId) &&
@@ -44,6 +356,68 @@
       row.academic_year === context.academic_year &&
       row.semester === context.semester
     ) || {};
+  }
+
+  function isMissingAverageColumn(error) {
+    const message = String(error && (error.message || error.details || error.hint) || "");
+    return /reported_average/i.test(message) && /column|schema cache|PGRST204/i.test(message);
+  }
+
+  function gradeSaveErrorMessage(error, fallback) {
+    const message = String(error && (error.message || error.details || error.hint) || "");
+    if (/regular_[45]/i.test(message) && /column|schema cache|PGRST204/i.test(message)) {
+      return "Database chưa có cột điểm thường xuyên 4 và 5. Hãy chạy lại supabase/schema.sql trong Supabase SQL Editor rồi tải lại trang.";
+    }
+    return message || fallback;
+  }
+
+  function updateImportedDuplicateNicknames(imported, roster) {
+    const groups = new Map();
+    let changed = false;
+    for (const item of imported) {
+      const key = normalizeStudentKey(item.student.name);
+      if (!key) continue;
+      const group = groups.get(key) || [];
+      group.push(item.student);
+      groups.set(key, group);
+    }
+
+    for (const students of groups.values()) {
+      if (students.length > 1) {
+        students.forEach((student, index) => {
+          const nickname = `${student.name} ${index + 1}`;
+          if (student.nickname !== nickname) changed = true;
+          student.nickname = nickname;
+        });
+        continue;
+      }
+
+      const importedNameKey = normalizeStudentKey(students[0] && students[0].name);
+      (roster || students).filter(student => normalizeStudentKey(student.name) === importedNameKey).forEach(student => {
+        const generatedNickname = new RegExp(`^${String(student.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+\\d+$`, "i");
+        if (generatedNickname.test(String(student.nickname || ""))) {
+          student.nickname = "";
+          changed = true;
+        }
+      });
+    }
+    return changed;
+  }
+
+  async function upsertGradeRecords(client, records) {
+    const options = { onConflict: "class_id,student_id,subject,academic_year,semester" };
+    const firstAttempt = await client.from("grades").upsert(records, options);
+    if (!firstAttempt.error) return { omittedAverage: false };
+    if (!isMissingAverageColumn(firstAttempt.error)) throw firstAttempt.error;
+
+    const compatibleRecords = records.map(record => {
+      const compatibleRecord = { ...record };
+      delete compatibleRecord.reported_average;
+      return compatibleRecord;
+    });
+    const retry = await client.from("grades").upsert(compatibleRecords, options);
+    if (retry.error) throw retry.error;
+    return { omittedAverage: true };
   }
 
   function renderGradeRow(student, index, context) {
@@ -59,9 +433,9 @@
     return `<tr class="hover:bg-teal-50/40">
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${index + 1}</td>
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold text-slate-600">${escapeHtmlText(student.code || "—")}</td>
-      <td class="min-w-48 border border-slate-200 bg-slate-50 px-3 py-3 font-bold text-slate-800">${escapeHtmlText(student.name || "Học sinh")}</td>
+      <td class="min-w-48 border border-slate-200 bg-slate-50 px-3 py-3 font-bold text-slate-800">${window.getStudentDisplayName ? window.getStudentDisplayName(student) : escapeHtmlText(student.name || "Học sinh")}</td>
       ${cells}
-      <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${computeAverage(row) || "—"}</td>
+      <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"}</td>
       <td class="min-w-64 border border-slate-200 bg-white p-2">
         ${isTeacher()
           ? `<textarea aria-label="Nhận xét - ${escapeHtmlText(student.name)}" data-student-id="${escapeHtmlText(student.id)}" rows="2" class="w-full resize-y rounded-lg border border-slate-200 p-2 text-sm outline-none focus:border-teal-500" onchange="saveGradeField(this.dataset.studentId,'comment',this.value)">${escapeHtmlText(row.comment || "")}</textarea>`
@@ -71,9 +445,13 @@
   }
 
   window.renderGradesView = function () {
-    const students = isTeacher()
+    let students = isTeacher()
       ? (state.students || [])
       : (state.students || []).filter(student => String(student.id) === linkedStudentId());
+    if (isTeacher() && Array.isArray(state.gradeImportOrder)) {
+      const byId = new Map(students.map(student => [String(student.id), student]));
+      students = state.gradeImportOrder.map(id => byId.get(String(id))).filter(Boolean);
+    }
     const years = state.academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
     const context = {
       subject: (document.getElementById("grade-subject") || {}).value || "Toán",
@@ -84,10 +462,7 @@
 
     return `<section class="animate-fade-in space-y-5">
       <div class="flex flex-col gap-4 rounded-3xl bg-gradient-to-r from-emerald-900 to-teal-800 p-6 text-white shadow-lg md:flex-row md:items-center md:justify-between">
-        <div><div class="text-xs font-black tracking-[0.18em] text-emerald-200">${isTeacher() ? "CHỈ GVCN ĐƯỢC NHẬP/XEM ĐIỂM CẢ LỚP" : "BẢNG ĐIỂM CÁ NHÂN"}</div>
-          <h2 class="mt-2 text-2xl font-black">${roleHeading}</h2>
-          <p class="mt-1 text-sm text-emerald-100">${isTeacher() ? "Điểm được lưu trong database; học sinh chỉ xem được điểm của chính mình." : "Thông tin này chỉ GVCN và tài khoản của bạn được phép xem."}</p>
-        </div>
+        <h2 class="text-2xl font-black">${roleHeading}</h2>
         <div class="flex flex-wrap gap-2">
           <select id="grade-subject" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             ${["Toán", "Ngữ văn", "Tiếng Anh", "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học", "Khác"].map(subject => `<option class="text-slate-900" ${context.subject === subject ? "selected" : ""}>${subject}</option>`).join("")}
@@ -101,30 +476,49 @@
         </div>
       </div>
       <div id="grade-access-error" class="hidden rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700"></div>
+      ${isTeacher() ? `<div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 class="font-black text-emerald-900">Nhập điểm cả lớp từ máy tính</h3>
+            <p class="mt-1 text-sm text-emerald-800">Tải file mẫu, điền thông tin và điểm, rồi chọn tệp để nhập. Học sinh được ghép theo mã định danh hoặc họ tên.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="downloadGradeTemplate()" class="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800 hover:bg-emerald-100">
+              Tải file mẫu
+            </button>
+            <label class="cursor-pointer rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">
+              Chọn file từ máy
+              <input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="prepareGradeImport(this)">
+            </label>
+            ${Array.isArray(state.gradeImportOrder) ? `<button type="button" onclick="clearGradeImportOrder()" class="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">Hiện cả lớp</button>` : ""}
+          </div>
+        </div>
+        <div id="grade-import-status" class="mt-3"></div>
+      </div>` : ""}
       <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div class="overflow-x-auto">
-          <table class="min-w-[1050px] border-collapse text-sm">
+          <table class="min-w-[1220px] border-collapse text-sm">
             <thead class="bg-sky-700 text-white">
               <tr>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">STT</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">Mã định danh Bộ GD&amp;ĐT</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">Họ tên</th>
-                <th colspan="3" class="border border-white/20 px-3 py-2">ĐĐGtx</th>
+                <th colspan="5" class="border border-white/20 px-3 py-2">ĐĐGtx</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGgk</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGck</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">ĐTBmhk</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">Nhận xét sự tiến bộ, ưu điểm nổi bật, hạn chế chủ yếu</th>
               </tr>
-              <tr>${["1", "2", "3"].map(label => `<th class="border border-white/20 px-3 py-2">${label}</th>`).join("")}</tr>
+              <tr>${["1", "2", "3", "4", "5"].map(label => `<th class="border border-white/20 px-3 py-2">${label}</th>`).join("")}</tr>
             </thead>
             <tbody>${students.length
               ? students.map((student, index) => renderGradeRow(student, index, context)).join("")
-              : `<tr><td colspan="10" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
+              : `<tr><td colspan="12" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
             </tbody>
           </table>
         </div>
         <div class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          Điểm trung bình tính theo trọng số: thường xuyên ×1, giữa kỳ ×2, cuối kỳ ×3; chỉ tính các cột đã có điểm.
+          Điểm trung bình hiển thị theo file nếu có; nếu không, hệ thống tính theo trọng số từ các điểm thành phần.
         </div>
       </div>
     </section>`;
@@ -146,7 +540,7 @@
       renderLayout();
       return;
     }
-    if (!["regular_1", "regular_2", "regular_3", "midterm", "final", "comment"].includes(field)) {
+    if (!["regular_1", "regular_2", "regular_3", "regular_4", "regular_5", "midterm", "final", "comment"].includes(field)) {
       showToast("Cột điểm không hợp lệ.", "error");
       return;
     }
@@ -169,17 +563,20 @@
         [field]: value,
         updated_at: new Date().toISOString(),
       };
+      if (field !== "comment") record.reported_average = null;
       delete record.id;
       const client = await window.cloudReady;
-      const { error } = await client.from("grades").upsert(record, {
-        onConflict: "class_id,student_id,subject,academic_year,semester",
-      });
-      if (error) throw error;
+      const { omittedAverage } = await upsertGradeRecords(client, [record]);
       await window.loadGrades();
-      showToast("Đã lưu điểm vào database.", "success");
+      showToast(
+        omittedAverage
+          ? "Đã lưu điểm. Database chưa có cột ĐTB từ file; hệ thống sẽ tự tính. Hãy chạy lại supabase/schema.sql để lưu cột này."
+          : "Đã lưu điểm vào database.",
+        "success"
+      );
     } catch (error) {
       console.error("Không thể lưu điểm:", error);
-      showToast(error.message || "Không thể lưu điểm. Hãy kiểm tra kết nối và phân quyền database.", "error");
+      showToast(gradeSaveErrorMessage(error, "Không thể lưu điểm. Hãy kiểm tra kết nối và phân quyền database."), "error");
     }
   };
 
