@@ -17,6 +17,23 @@
     return String(state.auth && state.auth.studentId || "");
   }
 
+  function formatStudentDob(value) {
+    const dob = String(value || "").trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : dob || "—";
+  }
+
+  function teacherGradeScopeStudents() {
+    let students = state.students || [];
+    const filter = String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"));
+    if (filter === "import" && Array.isArray(state.gradeImportOrder)) {
+      const byId = new Map(students.map(student => [String(student.id), student]));
+      return state.gradeImportOrder.map(id => byId.get(String(id))).filter(Boolean);
+    }
+    if (filter !== "all") students = students.filter(student => String(student.group || "").trim() === filter);
+    return students;
+  }
+
   function computeAverage(record) {
     const weighted = [
       [record.regular_1, 1],
@@ -437,6 +454,7 @@
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${index + 1}</td>
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold text-slate-600">${escapeHtmlText(student.code || "—")}</td>
       <td class="min-w-48 border border-slate-200 bg-slate-50 px-3 py-3 font-bold text-slate-800">${window.getStudentDisplayName ? window.getStudentDisplayName(student) : escapeHtmlText(student.name || "Học sinh")}</td>
+      <td class="whitespace-nowrap border border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold text-slate-600">${escapeHtmlText(formatStudentDob(student.dob))}</td>
       ${cells}
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">
         ${isTeacher()
@@ -455,19 +473,22 @@
 
   window.renderGradesView = function () {
     let students = isTeacher()
-      ? (state.students || [])
+      ? teacherGradeScopeStudents()
       : (state.students || []).filter(student => String(student.id) === linkedStudentId());
-    if (isTeacher() && Array.isArray(state.gradeImportOrder)) {
-      const byId = new Map(students.map(student => [String(student.id), student]));
-      students = state.gradeImportOrder.map(id => byId.get(String(id))).filter(Boolean);
-    }
+    const groupFilter = isTeacher()
+      ? String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"))
+      : "all";
+    const gradeGroups = [...new Set((state.students || []).map(student => String(student.group || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi"));
+    const gradeScopeLabel = groupFilter === "all" ? "cả lớp" : groupFilter === "import" ? "danh sách vừa nhập" : groupFilter;
     const years = state.academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
     const context = {
       subject: (document.getElementById("grade-subject") || {}).value || "Toán",
       academic_year: (document.getElementById("grade-year") || {}).value || years,
       semester: (document.getElementById("grade-semester") || {}).value || "HK1",
     };
-    const roleHeading = isTeacher() ? "BẢNG NHẬP ĐIỂM CẢ LỚP" : "KẾT QUẢ HỌC TẬP CỦA BẠN";
+    const roleHeading = isTeacher()
+      ? `BẢNG NHẬP ĐIỂM ${gradeScopeLabel.toLocaleUpperCase("vi")}`
+      : "KẾT QUẢ HỌC TẬP CỦA BẠN";
     const subjects = ["Toán", "Ngữ văn", "Tiếng Anh", "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học", "Khác"];
     const visibleSubjects = isTeacher()
       ? [context.subject]
@@ -483,12 +504,13 @@
       return `<div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         ${!isTeacher() ? `<h3 class="border-b border-slate-100 bg-emerald-50 px-5 py-3 text-lg font-black text-emerald-900">${escapeHtmlText(subject)}</h3>` : ""}
         <div class="overflow-x-auto">
-          <table class="min-w-[1220px] border-collapse text-sm">
+          <table class="min-w-[1320px] border-collapse text-sm">
             <thead class="bg-sky-700 text-white">
               <tr>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">STT</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">Mã định danh Bộ GD&amp;ĐT</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">Họ tên</th>
+                <th rowspan="2" class="whitespace-nowrap border border-white/20 px-3 py-3">Ngày sinh</th>
                 <th colspan="5" class="border border-white/20 px-3 py-2">ĐĐGtx</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGgk</th>
                 <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGck</th>
@@ -499,15 +521,15 @@
             </thead>
             <tbody>${students.length
               ? students.map((student, index) => renderGradeRow(student, index, subjectContext)).join("")
-              : `<tr><td colspan="12" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
+              : `<tr><td colspan="13" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
             </tbody>
           </table>
         </div>
         ${isTeacher() ? `<div class="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><div class="text-sm font-black text-slate-800">Công bố ĐTBmhk môn ${escapeHtmlText(subject)} cho cả lớp</div><p class="mt-1 text-xs text-slate-500">Có thể bật/tắt riêng từng học sinh ngay trong cột điểm trung bình.</p></div>
+          <div><div class="text-sm font-black text-slate-800">Công bố ĐTBmhk môn ${escapeHtmlText(subject)} cho ${escapeHtmlText(gradeScopeLabel)}</div><p class="mt-1 text-xs text-slate-500">Có thể bật/tắt riêng từng học sinh ngay trong cột điểm trung bình.</p></div>
           <label class="inline-flex w-fit cursor-pointer items-center gap-2 rounded-full border ${allAveragesVisible ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-white text-slate-600"} px-4 py-2.5 text-xs font-black shadow-sm transition hover:border-emerald-300">
-            <input id="grade-visibility-all" type="checkbox" ${allAveragesVisible ? "checked" : ""} ${state.gradeVisibilitySaving ? "disabled" : ""} onchange="setGradeVisibilityForClass(this.checked)" class="h-4 w-4 accent-emerald-600">
-            ${state.gradeVisibilitySaving ? "Đang cập nhật…" : allAveragesVisible ? "Đang hiện với cả lớp" : "Hiện ĐTBmhk cả lớp"}
+            <input id="grade-visibility-all" type="checkbox" ${allAveragesVisible ? "checked" : ""} ${state.gradeVisibilitySaving ? "disabled" : ""} onchange="setGradeVisibilityForScope(this.checked)" class="h-4 w-4 accent-emerald-600">
+            ${state.gradeVisibilitySaving ? "Đang cập nhật…" : allAveragesVisible ? `Đang hiện với ${escapeHtmlText(gradeScopeLabel)}` : `Hiện ĐTBmhk ${escapeHtmlText(gradeScopeLabel)}`}
           </label>
         </div>` : ""}
         <div class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">Điểm trung bình hiển thị theo file nếu có; nếu không, hệ thống tính theo trọng số từ các điểm thành phần.</div>
@@ -520,6 +542,11 @@
         <div class="flex flex-wrap gap-2">
           ${isTeacher() ? `<select id="grade-subject" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             ${subjects.map(subject => `<option class="text-slate-900" ${context.subject === subject ? "selected" : ""}>${subject}</option>`).join("")}
+          </select>
+          <select id="grade-group-filter" aria-label="Lọc học sinh theo tổ" onchange="state.gradeGroupFilter=this.value;renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
+            <option value="all" class="text-slate-900" ${groupFilter === "all" ? "selected" : ""}>Cả lớp</option>
+            ${Array.isArray(state.gradeImportOrder) ? `<option value="import" class="text-slate-900" ${groupFilter === "import" ? "selected" : ""}>Danh sách vừa nhập</option>` : ""}
+            ${gradeGroups.map(group => `<option value="${escapeHtmlAttr(group)}" class="text-slate-900" ${groupFilter === group ? "selected" : ""}>${escapeHtmlText(group)}</option>`).join("")}
           </select>` : ""}
           <select id="grade-year" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             <option class="text-slate-900" ${context.academic_year === years ? "selected" : ""}>${escapeHtmlText(years)}</option>
@@ -562,6 +589,79 @@
     if (state.currentTab === "diem-so") renderLayout();
   };
 
+  window.saveGradeVisibility = async function (studentId, visible) {
+    if (!isTeacher()) {
+      showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
+      await window.loadGrades();
+      renderLayout();
+      return;
+    }
+    try {
+      const context = selectedContext();
+      const existing = gradeFor(studentId, context);
+      const record = {
+        ...existing,
+        class_id: state.cloudProfile.class_id,
+        student_id: String(studentId),
+        ...context,
+        average_visible: Boolean(visible),
+        updated_at: new Date().toISOString(),
+      };
+      delete record.id;
+      await upsertGradeRecords(await window.cloudReady, [record]);
+      await window.loadGrades();
+      showToast(visible ? "Đã công bố điểm trung bình cho học sinh." : "Đã ẩn điểm trung bình với học sinh.", "success");
+    } catch (error) {
+      console.error("Không thể cập nhật quyền xem điểm trung bình:", error);
+      showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem điểm trung bình. Hãy chạy lại supabase/schema.sql."), "error");
+      await window.loadGrades();
+    }
+  };
+
+  window.setGradeVisibilityForScope = async function (visible) {
+    if (!isTeacher()) {
+      showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
+      await window.loadGrades();
+      renderLayout();
+      return;
+    }
+    if (state.gradeVisibilitySaving) return;
+    state.gradeVisibilitySaving = true;
+    renderLayout();
+    try {
+      const context = selectedContext();
+      const records = teacherGradeScopeStudents().map(student => {
+        const existing = gradeFor(student.id, context);
+        const record = {
+          ...existing,
+          class_id: state.cloudProfile.class_id,
+          student_id: String(student.id),
+          ...context,
+          average_visible: Boolean(visible),
+          updated_at: new Date().toISOString(),
+        };
+        delete record.id;
+        return record;
+      });
+      if (!records.length) {
+        showToast("Không có học sinh trong phạm vi đang chọn.", "error");
+        return;
+      }
+      await upsertGradeRecords(await window.cloudReady, records);
+      await window.loadGrades();
+      const filter = String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"));
+      const scope = filter === "all" ? "cả lớp" : filter === "import" ? "danh sách vừa nhập" : filter;
+      showToast(visible ? `Đã công bố ĐTBmhk cho ${scope}.` : `Đã ẩn ĐTBmhk với ${scope}.`, "success");
+    } catch (error) {
+      console.error("Không thể cập nhật quyền xem điểm trung bình:", error);
+      showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem ĐTBmhk. Hãy kiểm tra cấu hình database."), "error");
+      await window.loadGrades();
+    } finally {
+      state.gradeVisibilitySaving = false;
+      renderLayout();
+    }
+  };
+
   window.saveGradeField = async function (studentId, field, rawValue) {
     if (!isTeacher()) {
       showToast("Chỉ GVCN được nhập hoặc sửa điểm.", "error");
@@ -580,7 +680,6 @@
       renderLayout();
       return;
     }
-
     try {
       const context = selectedContext();
       const existing = gradeFor(studentId, context);
@@ -591,73 +690,6 @@
         ...context,
         [field]: value,
         updated_at: new Date().toISOString(),
-      };
-
-      window.saveGradeVisibility = async function (studentId, visible) {
-        if (!isTeacher()) {
-          showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
-          await window.loadGrades();
-          renderLayout();
-          return;
-        }
-        try {
-          const context = selectedContext();
-          const existing = gradeFor(studentId, context);
-          const record = {
-            ...existing,
-            class_id: state.cloudProfile.class_id,
-            student_id: String(studentId),
-            ...context,
-            average_visible: Boolean(visible),
-            updated_at: new Date().toISOString(),
-          };
-
-          window.setGradeVisibilityForClass = async function (visible) {
-            if (!isTeacher()) {
-              showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
-              await window.loadGrades();
-              renderLayout();
-              return;
-            }
-            if (state.gradeVisibilitySaving) return;
-            state.gradeVisibilitySaving = true;
-            renderLayout();
-            try {
-              const context = selectedContext();
-              const records = (state.students || []).map(student => {
-                const existing = gradeFor(student.id, context);
-                const record = {
-                  ...existing,
-                  class_id: state.cloudProfile.class_id,
-                  student_id: String(student.id),
-                  ...context,
-                  average_visible: Boolean(visible),
-                  updated_at: new Date().toISOString(),
-                };
-                delete record.id;
-                return record;
-              });
-              if (records.length) await upsertGradeRecords(await window.cloudReady, records);
-              await window.loadGrades();
-              showToast(visible ? "Đã công bố ĐTBmhk cho cả lớp." : "Đã ẩn ĐTBmhk với cả lớp.", "success");
-            } catch (error) {
-              console.error("Không thể cập nhật quyền xem điểm trung bình của cả lớp:", error);
-              showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem ĐTBmhk. Hãy kiểm tra cấu hình database."), "error");
-              await window.loadGrades();
-            } finally {
-              state.gradeVisibilitySaving = false;
-              renderLayout();
-            }
-          };
-          delete record.id;
-          await upsertGradeRecords(await window.cloudReady, [record]);
-          await window.loadGrades();
-          showToast(visible ? "Đã công bố điểm trung bình cho học sinh." : "Đã ẩn điểm trung bình với học sinh.", "success");
-        } catch (error) {
-          console.error("Không thể cập nhật quyền xem điểm trung bình:", error);
-          showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem điểm trung bình. Hãy chạy lại supabase/schema.sql."), "error");
-          await window.loadGrades();
-        }
       };
       if (field !== "comment") record.reported_average = null;
       delete record.id;

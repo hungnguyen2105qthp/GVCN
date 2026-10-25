@@ -89,6 +89,8 @@
     const shouldImport = profile.role === "gvcn" && (!nextState || (importedBackup && replaceExisting));
     if (shouldImport) {
       const migration = { ...(legacyState || {}) };
+      const legacyAttendanceRecords = migration.attendanceRecords;
+      delete migration.attendanceRecords;
       delete migration.auth;
       delete migration.users;
       delete migration.database;
@@ -106,6 +108,8 @@
       nextState = migration;
       state.cloudMigrationPerformed = true;
       state.cloudMigrationHadLegacy = Object.keys(legacyState || {}).length > 0;
+      state.pendingAttendanceImport = legacyAttendanceRecords || {};
+      state.attendanceImportPending = true;
     }
     if (profile.class_id === "12C1" && nextState && nextState.admin && nextState.admin.className === "LỚP 12A1") {
       nextState = { ...nextState, admin: { ...nextState.admin, className: "LỚP 12C1" } };
@@ -183,6 +187,7 @@
       state.cloudAccountMigrationErrors = accountMigrationErrors;
     }
     applyStateDefaults();
+    await window.loadAttendanceRecords();
     if (classNameRenamed && profile.role === "gvcn") await window.persistCloudClass();
     return true;
   };
@@ -199,6 +204,9 @@
     delete persisted.cloudProfile;
     delete persisted.loginRoleSelect;
     delete persisted.gradeRows;
+    delete persisted.attendanceRecords;
+    delete persisted.pendingAttendanceImport;
+    delete persisted.attendanceImportPending;
     delete persisted.cloudMigrationPerformed;
     delete persisted.cloudMigrationHadLegacy;
     delete persisted.cloudMigratedAccounts;
@@ -210,6 +218,106 @@
     const { error } = await client.from("class_data").upsert(
       { class_id: state.cloudProfile.class_id, state: persisted },
       { onConflict: "class_id" }
+    );
+    if (error) throw error;
+  };
+
+  window.loadAttendanceRecords = async function () {
+    const client = await window.cloudReady;
+    if (!state.auth || !state.auth.loggedIn || !state.cloudProfile) return;
+
+    const legacyRecords = state.attendanceImportPending ? state.pendingAttendanceImport : null;
+    if (state.auth.role === "gvcn" && legacyRecords && typeof legacyRecords === "object") {
+      const records = Object.entries(legacyRecords).flatMap(([key, students]) => {
+        const separator = key.lastIndexOf("_");
+        const attendanceDate = separator < 0 ? "" : key.slice(0, separator);
+        const session = separator < 0 ? "" : key.slice(separator + 1);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate) || !["Sáng", "Chiều"].includes(session)) return [];
+        return Object.entries(students || {}).flatMap(([studentId, status]) =>
+          ["present", "late", "excused", "unexcused"].includes(status)
+            ? [{
+                class_id: state.cloudProfile.class_id,
+                attendance_date: attendanceDate,
+                session,
+                student_id: String(studentId),
+                status,
+                updated_by: state.auth.userId,
+              }]
+            : []
+        );
+      });
+      if (state.cloudMigrationPerformed) {
+        const { error: deleteError } = await client.from("attendance_records")
+          .delete().eq("class_id", state.cloudProfile.class_id);
+        if (deleteError) throw deleteError;
+      }
+      if (records.length) {
+        const { error: importError } = await client.from("attendance_records")
+          .upsert(records, { onConflict: "class_id,attendance_date,session,student_id" });
+        if (importError) throw importError;
+      }
+      delete state.pendingAttendanceImport;
+      state.attendanceImportPending = false;
+    }
+
+    const { data, error } = await client.from("attendance_records")
+      .select("attendance_date,session,student_id,status")
+      .order("attendance_date");
+    if (error) throw error;
+    const attendanceRecords = {};
+    (data || []).forEach(record => {
+      const key = `${record.attendance_date}_${record.session}`;
+      if (!attendanceRecords[key]) attendanceRecords[key] = {};
+      attendanceRecords[key][String(record.student_id)] = record.status;
+    });
+    state.attendanceRecords = attendanceRecords;
+  };
+
+  window.saveAttendanceRecord = async function (studentId, status, attendanceDate, session) {
+    const client = await window.cloudReady;
+    if (!state.auth || !state.auth.loggedIn || !state.cloudProfile) {
+      throw new Error("Vui lòng đăng nhập để điểm danh.");
+    }
+    const key = {
+      class_id: state.cloudProfile.class_id,
+      attendance_date: attendanceDate,
+      session,
+      student_id: String(studentId),
+    };
+    if (status === null) {
+      const { error } = await client.from("attendance_records").delete()
+        .match(key);
+      if (error) throw error;
+      return;
+    }
+    if (!["present", "late", "excused", "unexcused"].includes(status)) {
+      throw new Error("Trạng thái điểm danh không hợp lệ.");
+    }
+    const { error } = await client.from("attendance_records").upsert(
+      { ...key, status, updated_by: state.auth.userId, updated_at: new Date().toISOString() },
+      { onConflict: "class_id,attendance_date,session,student_id" }
+    );
+    if (error) throw error;
+  };
+
+  window.saveAttendanceRecords = async function (records) {
+    const client = await window.cloudReady;
+    if (!state.auth || !state.auth.loggedIn || !state.cloudProfile) {
+      throw new Error("Vui lòng đăng nhập để điểm danh.");
+    }
+    if (!records.length) return;
+    const rows = records.map(record => ({
+      class_id: state.cloudProfile.class_id,
+      attendance_date: record.attendanceDate,
+      session: record.session,
+      student_id: String(record.studentId),
+      status: record.status,
+      updated_by: state.auth.userId,
+      updated_at: new Date().toISOString(),
+    }));
+    const { error } = await client.from("attendance_records").upsert(
+      rows,
+      { onConflict: "class_id,attendance_date,session,student_id" }
     );
     if (error) throw error;
   };

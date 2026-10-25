@@ -232,17 +232,18 @@
         function escapeHtmlText(str) { return String(str ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
         function normalizeStudentName(value) {
-            return String(value ?? '').trim().normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd')
-                .toLocaleLowerCase('vi').replace(/[^a-z0-9]/g, '');
+            return String(value ?? '').normalize('NFKC').trim()
+                .replace(/\s+/g, ' ').toLocaleLowerCase('vi');
         }
 
         window.getStudentDisplayName = function(student) {
             return escapeHtmlText(student && student.nickname ? student.nickname : student && student.name ? student.name : 'Học sinh');
         };
 
-        window.prepareDuplicateStudentNicknames = function(students) {
+        window.prepareDuplicateStudentNicknames = function(students, namesToCheck) {
             const groups = new Map();
+            const checkedNames = new Set((Array.isArray(namesToCheck) ? namesToCheck : [namesToCheck])
+                .filter(Boolean).map(normalizeStudentName));
             students.forEach(student => {
                 const key = normalizeStudentName(student.name);
                 if (!key) return;
@@ -252,7 +253,8 @@
             });
 
             const updates = [];
-            for (const group of groups.values()) {
+            for (const [key, group] of groups) {
+                if (!checkedNames.has(key)) continue;
                 if (group.length < 2) continue;
                 const usedNicknames = new Set();
                 for (let index = 0; index < group.length; index++) {
@@ -339,6 +341,38 @@
             if (!state.auth || state.auth.role !== 'bcs') return null;
             const account = (state.users || []).find(user => String(user.id) === String(state.auth.userId));
             return account ? state.students.find(student => String(student.id) === String(account.studentId)) || null : null;
+        }
+
+        function isAttendanceLeader() {
+            if (state.auth && state.auth.role === 'gvcn') return true;
+            if (!state.auth || state.auth.role !== 'bcs') return false;
+            const role = String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi');
+            return role.includes('lớp trưởng') || role.includes('tổ trưởng');
+        }
+
+        function getAttendanceScopeStudents() {
+            if (!state.auth || !state.auth.loggedIn) return [];
+            if (state.auth.role === 'gvcn') return state.students || [];
+            const linkedStudent = state.auth.role === 'bcs' ? getBcsLinkedStudent() : null;
+            const linkedId = String(state.auth.studentId || linkedStudent && linkedStudent.id || '');
+            if (state.auth.role === 'bcs' && linkedStudent) {
+                const role = String(linkedStudent.role || '').toLocaleLowerCase('vi');
+                if (role.includes('lớp trưởng')) return state.students || [];
+                if (role.includes('tổ trưởng') && linkedStudent.group) {
+                    return (state.students || []).filter(student =>
+                        String(student.group || '').trim() === String(linkedStudent.group).trim()
+                    );
+                }
+            }
+            return (state.students || []).filter(student => String(student.id) === linkedId);
+        }
+
+        function canManageAttendanceStudent(studentId) {
+            if (!state.auth || !state.auth.loggedIn) return false;
+            if (state.auth.role === 'gvcn' || isAttendanceLeader()) {
+                return getAttendanceScopeStudents().some(student => String(student.id) === String(studentId));
+            }
+            return String(state.auth.studentId || '') === String(studentId);
         }
 
         function getReminderEligibleStudents() {
@@ -2488,6 +2522,8 @@ window.executePointsSubmission = function() {
             if (!state.attendanceRecords) state.attendanceRecords = {};
             if (!state.attendanceTab) state.attendanceTab = 'diem-danh';
             if (typeof window.attendanceTopFilter === 'undefined') window.attendanceTopFilter = 'thang'; // Mặc định xem theo tháng
+            const attendanceStudents = getAttendanceScopeStudents();
+            const canManageOthers = isAttendanceLeader();
             
             const recordKey = currentAttendanceDate + '_' + window.currentAttendanceSession;
             let contentHtml = '';
@@ -2513,8 +2549,9 @@ window.executePointsSubmission = function() {
                     return dateB - dateA; // Mới nhất lên đầu
                 });
                 
-                const tableRowsHtml = state.students.map((s, idx) => {
+                const tableRowsHtml = attendanceStudents.map((s, idx) => {
                     const status = currentRecord[s.id] || null;
+                    const canEditStudent = canManageAttendanceStudent(s.id);
                     
                     const renderButton = (val, label, colorTheme) => {
                         const isChecked = status === val;
@@ -2568,10 +2605,12 @@ window.executePointsSubmission = function() {
                                 ${historyHtml}
                             </div>
                             <div class="w-full xl:w-7/12 flex items-center gap-3 flex-wrap sm:flex-nowrap">
-                                <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('present', 'Có mặt', 'emerald')}</div>
-                                <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('late', 'Đi muộn', 'yellow')}</div>
-                                <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('excused', 'Vắng (P)', 'blue')}</div>
-                                <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('unexcused', 'Vắng (KP)', 'red')}</div>
+                                ${canEditStudent
+                                    ? `<div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('present', 'Có mặt', 'emerald')}</div>
+                                       ${canManageOthers ? `<div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('late', 'Đi muộn', 'yellow')}</div>
+                                       <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('excused', 'Vắng (P)', 'blue')}</div>
+                                       <div class="w-[calc(50%-0.375rem)] sm:w-auto flex-1">${renderButton('unexcused', 'Vắng (KP)', 'red')}</div>` : ''}`
+                                    : `<span class="text-xs font-semibold text-slate-400">Chỉ xem</span>`}
                             </div>
                         </div>
                     `;
@@ -2588,7 +2627,7 @@ window.executePointsSubmission = function() {
                             <div class="relative flex-shrink-0">
                                 <input type="date" value="${currentAttendanceDate}" onchange="changeAttendanceDate(this.value)" class="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:border-blueAccent w-40 shadow-sm">
                             </div>
-                            <button onclick="markAllPresent()" class="px-5 py-2.5 bg-emerald-500 text-white font-bold rounded-xl shadow-md hover:bg-emerald-600 flex items-center justify-center gap-2 text-sm transition-all flex-shrink-0"><i class="ph-bold ph-check-square-offset text-lg"></i> Cả lớp có mặt</button>
+                            ${canManageOthers ? `<button onclick="markAllPresent()" class="px-5 py-2.5 bg-emerald-500 text-white font-bold rounded-xl shadow-md hover:bg-emerald-600 flex items-center justify-center gap-2 text-sm transition-all flex-shrink-0"><i class="ph-bold ph-check-square-offset text-lg"></i> ${state.auth.role === 'gvcn' || String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi').includes('lớp trưởng') ? 'Cả lớp có mặt' : 'Cả tổ có mặt'}</button>` : ''}
                         </div>
                     </div>
                     <div class="bg-white rounded-[2rem] shadow-sm border border-slate-200 flex flex-col relative z-10">
@@ -2631,13 +2670,13 @@ window.executePointsSubmission = function() {
                     const sessionColor = session === 'Sáng' ? 'text-orange-400' : 'text-indigo-400';
                     const formatted = `${p[2]}/${p[1]}/${p[0]}<br><span class="text-[9px] font-black uppercase ${sessionColor}">${session}</span>`;
                     const dateLabel = `${p[2]}/${p[1]}/${p[0]}`;
-                    const heading = state.auth && state.auth.role === 'gvcn'
+                    const heading = canManageOthers
                         ? `<button type="button" title="Bấm để mở và sửa điểm danh ngày ${dateLabel}" onclick="openAttendanceDateForEdit('${parts[0]}','${escapeInlineJs(session)}')" class="text-white underline decoration-dotted underline-offset-2 hover:text-amber-200">${formatted}</button>`
                         : formatted;
                     return `<th class="p-4 text-center border-l border-white/10 whitespace-nowrap text-white font-bold text-xs tracking-wider w-20 leading-tight">${heading}</th>`;
                 }).join('');
                 
-                const tableBodyRows = state.students.map((s, index) => {
+                const tableBodyRows = attendanceStudents.map((s, index) => {
                     let presentCount = 0, absentCount = 0;
                     const dateCells = allDates.map(d => {
                         const status = state.attendanceRecords[d][s.id]; 
@@ -2722,7 +2761,7 @@ window.executePointsSubmission = function() {
                 };
 
                 // Thống kê đếm lỗi
-                const studentStats = state.students.map(s => {
+                const studentStats = attendanceStudents.map(s => {
                     let late = 0, excused = 0, unexcused = 0, total = 0;
                     Object.keys(state.attendanceRecords).forEach(recordKey => {
                         const dateStr = recordKey.split('_')[0];
@@ -2843,43 +2882,79 @@ window.executePointsSubmission = function() {
             }
         };
         
-        window.markAttendance = function(id, status) {
+        window.markAttendance = async function(id, status) {
+            if (!canManageAttendanceStudent(id)) {
+                showToast('Bạn chỉ được điểm danh cho học sinh thuộc phạm vi được phân công.', 'error');
+                return;
+            }
+            if (!['present', 'late', 'excused', 'unexcused'].includes(status) || (!isAttendanceLeader() && status !== 'present')) {
+                showToast('Học sinh chỉ có thể tự xác nhận có mặt.', 'error');
+                return;
+            }
             const recordKey = currentAttendanceDate + '_' + window.currentAttendanceSession;
             if (!state.attendanceRecords[recordKey]) state.attendanceRecords[recordKey] = {};
             const oldStatus = state.attendanceRecords[recordKey][id];
-            
-            if (oldStatus === status) {
-                delete state.attendanceRecords[recordKey][id];
-                window.revertAttendancePoints(id, oldStatus, recordKey);
-            } else {
-                if (oldStatus) window.revertAttendancePoints(id, oldStatus, recordKey);
-                state.attendanceRecords[recordKey][id] = status;
-                window.applyAttendancePoints(id, status, recordKey);
+            const nextStatus = oldStatus === status ? null : status;
+            try {
+                await window.saveAttendanceRecord(id, nextStatus, currentAttendanceDate, window.currentAttendanceSession);
+            } catch (error) {
+                console.error('Không thể lưu điểm danh:', error);
+                showToast(error.message || 'Không thể lưu điểm danh. Hãy kiểm tra kết nối và quyền tài khoản.', 'error');
+                return;
             }
-            
+            if (state.auth.role === 'gvcn' && oldStatus) window.revertAttendancePoints(id, oldStatus, recordKey);
+            if (nextStatus) {
+                state.attendanceRecords[recordKey][id] = nextStatus;
+                if (state.auth.role === 'gvcn') window.applyAttendancePoints(id, nextStatus, recordKey);
+            } else {
+                delete state.attendanceRecords[recordKey][id];
+                if (!Object.keys(state.attendanceRecords[recordKey]).length) delete state.attendanceRecords[recordKey];
+            }
             const stu = state.students.find(s => String(s.id) === String(id));
-            const statusText = status === 'present' ? 'Có mặt' : status === 'late' ? 'Đi muộn' : status === 'excused' ? 'Vắng (P)' : 'Vắng (KP)';
+            const statusText = nextStatus === 'present' ? 'Có mặt' : nextStatus === 'late' ? 'Đi muộn' : nextStatus === 'excused' ? 'Vắng (P)' : nextStatus === 'unexcused' ? 'Vắng (KP)' : 'Hủy điểm danh';
             if(stu && typeof logBCSAction === 'function') logBCSAction(`Điểm danh ${stu.name} (${window.currentAttendanceSession}): ${statusText}`);
             saveData(); 
             renderLayout();
         };
         
-        window.markAllPresent = function() {
+        window.markAllPresent = async function() {
+            if (!isAttendanceLeader()) {
+                showToast('Chỉ GVCN, lớp trưởng hoặc tổ trưởng mới được điểm danh nhiều học sinh.', 'error');
+                return;
+            }
             const recordKey = currentAttendanceDate + '_' + window.currentAttendanceSession;
             if (!state.attendanceRecords[recordKey]) state.attendanceRecords[recordKey] = {};
-            
-            state.students.forEach(s => {
+            const studentsToMark = getAttendanceScopeStudents().filter(student =>
+                state.attendanceRecords[recordKey][student.id] !== 'present'
+            );
+            try {
+                await window.saveAttendanceRecords(studentsToMark.map(student => ({
+                    studentId: student.id,
+                    status: 'present',
+                    attendanceDate: currentAttendanceDate,
+                    session: window.currentAttendanceSession,
+                })));
+            } catch (error) {
+                console.error('Không thể điểm danh cả nhóm:', error);
+                showToast(error.message || 'Không thể điểm danh. Hãy kiểm tra kết nối và quyền tài khoản.', 'error');
+                return;
+            }
+            studentsToMark.forEach(s => {
                 const oldStatus = state.attendanceRecords[recordKey][s.id];
-                if (oldStatus !== 'present') {
-                    if (oldStatus) window.revertAttendancePoints(s.id, oldStatus, recordKey);
-                    state.attendanceRecords[recordKey][s.id] = 'present';
-                    window.applyAttendancePoints(s.id, 'present', recordKey);
-                }
+                if (state.auth.role === 'gvcn' && oldStatus) window.revertAttendancePoints(s.id, oldStatus, recordKey);
+                state.attendanceRecords[recordKey][s.id] = 'present';
+                if (state.auth.role === 'gvcn') window.applyAttendancePoints(s.id, 'present', recordKey);
             });
-            if(typeof logBCSAction === 'function') logBCSAction(`Đánh dấu cả lớp có mặt: ${currentAttendanceDate} (${window.currentAttendanceSession})`);
+            const groupLabel = state.auth.role === 'gvcn' ||
+                String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi').includes('lớp trưởng')
+                ? 'cả lớp'
+                : `cả ${getBcsLinkedStudent().group || 'tổ'}`;
+            if(typeof logBCSAction === 'function') logBCSAction(`Đánh dấu ${groupLabel} có mặt: ${currentAttendanceDate} (${window.currentAttendanceSession})`);
             saveData(); 
             renderLayout(); 
-            showToast("Đã đánh dấu cả lớp có mặt và tự động cộng điểm!", "success");
+            showToast(state.auth.role === 'gvcn'
+                ? `Đã đánh dấu ${groupLabel} có mặt và tự động cộng điểm!`
+                : `Đã cập nhật điểm danh cho ${groupLabel}.`, "success");
         };
         
         window.changeAttendanceDate = function(d) { 
@@ -2887,8 +2962,8 @@ window.executePointsSubmission = function() {
         };
 
         window.openAttendanceDateForEdit = function(date, session) {
-            if (!state.auth || state.auth.role !== 'gvcn') {
-                showToast('Chỉ GVCN mới được sửa điểm danh.', 'error');
+            if (!isAttendanceLeader()) {
+                showToast('Chỉ GVCN, lớp trưởng hoặc tổ trưởng mới được sửa điểm danh.', 'error');
                 return;
             }
             currentAttendanceDate = date;
@@ -2918,7 +2993,7 @@ window.executePointsSubmission = function() {
                 return true;
             };
 
-            const studentStats = state.students.map(s => {
+            const studentStats = getAttendanceScopeStudents().map(s => {
                 let late = 0, excused = 0, unexcused = 0, total = 0;
                 Object.keys(state.attendanceRecords).forEach(recordKey => {
                     const dateStr = recordKey.split('_')[0];
@@ -4474,7 +4549,7 @@ window.saveStudentEdit = function() {
         candidate.nickname = '';
     }
     const otherStudents = state.students.filter((student, index) => index !== existingIndex);
-    const nicknameUpdates = window.prepareDuplicateStudentNicknames([...otherStudents, candidate]);
+    const nicknameUpdates = window.prepareDuplicateStudentNicknames([...otherStudents, candidate], candidate.name);
     if (!nicknameUpdates) return;
     nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
 
@@ -4680,7 +4755,10 @@ window.openEditGroupModal = function(id) {
             });
             const addedCount = importedStudents.length;
             if (addedCount > 0) {
-                const nicknameUpdates = window.prepareDuplicateStudentNicknames([...state.students, ...importedStudents]);
+                const nicknameUpdates = window.prepareDuplicateStudentNicknames(
+                    [...state.students, ...importedStudents],
+                    importedStudents.map(student => student.name)
+                );
                 if (!nicknameUpdates) return;
                 nicknameUpdates.forEach(({ student, nickname }) => { student.nickname = nickname; });
                 state.students.push(...importedStudents);
@@ -6078,7 +6156,7 @@ window.playBellSound = function(idx = 0) {
                 return `<tr>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;padding:5px 4px;">${escapeTimetableText(period.replace(/^Tiết\\s*/i, ''))}</td>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;white-space:nowrap;padding:5px 6px;">${escapeTimetableText(time)}</td>
-                    ${cells.map(cell => `<td style="border:1px solid #8ba8c8;text-align:center;padding:5px 4px;height:25px;">${escapeTimetableText(cell.subject || '')}${cell.reminder ? `<div style="white-space:pre-wrap;margin-top:3px;color:#92400e;font-size:9px;font-weight:600;">${escapeTimetableText(cell.reminder)}</div>` : ''}</td>`).join('')}
+                    ${cells.map(cell => `<td style="border:1px solid #8ba8c8;text-align:center;padding:5px 4px;height:25px;">${escapeTimetableText(cell.subject || '')}</td>`).join('')}
                 </tr>`;
             }).join('');
             return `<section style="margin-top:12px;">
@@ -6114,7 +6192,7 @@ window.playBellSound = function(idx = 0) {
             const displayedSchedule = selectedHistory ? selectedHistory.schedule : state.dailySchedule;
             const formattedEffectiveDate = new Date(`${effectiveDate}T00:00:00`).toLocaleDateString('vi-VN');
             const academicYear = state.academicYear || `${today.getFullYear()} - ${today.getFullYear() + 1}`;
-            const schoolLogo = state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : DEFAULT_SCHOOL_LOGO_DATA_URL;
+            const schoolLogo = state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : './logo.png';
             const className = escapeTimetableText(String(state.admin && state.admin.className || 'Lớp học').trim().replace(/^lớp\s+/i, ''));
             const printRoot = document.createElement('div');
             printRoot.id = 'timetable-pdf-export';
@@ -6223,7 +6301,7 @@ window.playBellSound = function(idx = 0) {
                                     </label>
                                 </div>
                                 <div class="flex flex-wrap items-center justify-end gap-2">
-                                    <img src="${escapeTimetableText(state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : DEFAULT_SCHOOL_LOGO_DATA_URL)}" alt="Logo trường THPT Quang Trung" class="h-20 w-24 rounded-xl bg-white object-contain p-1 shadow-sm border border-sky-100">
+                                    <img src="${escapeTimetableText(state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : './logo.png')}" alt="Logo trường THPT Quang Trung" class="h-20 w-24 rounded-xl bg-white object-contain p-1 shadow-sm border border-sky-100">
                                     <button onclick="downloadTimetablePdf()" class="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-800"><i class="ph-bold ph-download-simple"></i> Tải TKB PDF</button>
                                     ${canEdit ? `<label class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"><i class="ph-bold ph-upload-simple"></i> Tải file TKB<input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleTimetableExcelUpload(event)"></label>` : ''}
                                 </div>
@@ -7844,7 +7922,7 @@ window.parseExcelToDailySchedule = function(rows) {
             return `
                 ${animationStyle}
                 <!-- NỀN XANH NAVY TỐI -->
-                <div class="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a] overflow-hidden animate-fade-in font-sans p-4">
+                <div class="fixed inset-0 z-50 flex items-start justify-center bg-[#0f172a] overflow-x-hidden overflow-y-auto animate-fade-in font-sans p-4 md:items-center">
                     
                     <!-- CÁC DỤNG CỤ HỌC TẬP TRÔI NỔI PHÍA SAU -->
                     <i class="ph-fill ph-pencil login-item d-1"></i>
@@ -7855,17 +7933,14 @@ window.parseExcelToDailySchedule = function(rows) {
                     <i class="ph-fill ph-ruler login-item d-6"></i>
 
                     <!-- KHUNG ĐĂNG NHẬP CHÍNH -->
-                    <div class="bg-white rounded-[2rem] shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex flex-col md:flex-row w-full max-w-5xl overflow-hidden min-h-[600px] relative z-10">
+                    <div class="my-auto bg-white rounded-[2rem] shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex flex-col md:flex-row w-full max-w-5xl overflow-hidden min-h-[600px] relative z-10 shrink-0">
                         
                         <!-- CỘT TRÁI (Bên chứa ảnh) -->
                         <div class="hidden md:flex w-1/2 bg-slate-50 flex-col items-center justify-center p-12 border-r border-slate-100 relative">
                             
                             <!-- LOGO TRƯỜNG (Tự co giãn 100% không vỡ) -->
                             <div class="border-2 border-dashed border-pink-200 rounded-2xl p-2 mb-8 flex items-center justify-center bg-white shadow-sm z-10 w-full max-w-[280px] h-[80px] relative cursor-pointer group" onclick="document.getElementById('login-logo-upload').click()">
-                                ${state.theme.schoolLogo 
-                                    ? `<img src="${state.theme.schoolLogo}" class="w-full h-full object-contain">` 
-                                    : `<span class="text-pink-600 font-black text-lg tracking-wide text-center px-4">BẤM ĐỂ TẢI LOGO TRƯỜNG</span>`
-                                }
+                                <img src="${escapeHtmlAttr(state.theme && state.theme.schoolLogo || './logo.png')}" alt="Logo trường THPT Quang Trung" class="w-full h-full object-contain">
                                 <div class="absolute inset-0 bg-black/50 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                     <i class="ph-bold ph-camera text-white text-2xl"></i>
                                 </div>
@@ -8264,6 +8339,8 @@ window.parseExcelToDailySchedule = function(rows) {
             }
             delete snapshot.cloudProfile;
             delete snapshot.gradeRows;
+            delete snapshot.pendingAttendanceImport;
+            delete snapshot.attendanceImportPending;
             delete snapshot.classReminders;
             delete snapshot._legacyBackupPending;
             delete snapshot.cloudBackupPending;
@@ -8300,6 +8377,7 @@ window.parseExcelToDailySchedule = function(rows) {
             await window.loadGrades();
         }).catch(error => {
             console.error('Không thể khôi phục phiên online:', error);
+            showToast(error.message || 'Không thể tải dữ liệu lớp từ database.', 'error');
         });
         window.addEventListener('storage', (event) => {
             if (state.cloudProfile) return;

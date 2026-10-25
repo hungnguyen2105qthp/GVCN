@@ -65,6 +65,17 @@ create table if not exists public.class_reminders (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.attendance_records (
+  class_id text not null,
+  attendance_date date not null,
+  session text not null check (session in ('Sáng', 'Chiều')),
+  student_id text not null,
+  status text not null check (status in ('present', 'late', 'excused', 'unexcused')),
+  updated_by uuid default auth.uid() references auth.users (id),
+  updated_at timestamptz not null default now(),
+  primary key (class_id, attendance_date, session, student_id)
+);
+
 create index if not exists grades_student_lookup
   on public.grades (class_id, student_id, academic_year, semester);
 create index if not exists class_reminders_recipient_lookup
@@ -103,11 +114,80 @@ as $$
   select student_id from public.profiles where id = (select auth.uid())
 $$;
 
+create or replace function public.current_student_attendance_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select student->>'role'
+  from public.profiles profile
+  join public.class_data class on class.class_id = profile.class_id
+  cross join lateral jsonb_array_elements(
+    case when jsonb_typeof(class.state->'students') = 'array' then class.state->'students' else '[]'::jsonb end
+  ) student
+  where profile.id = (select auth.uid())
+    and student->>'id' = profile.student_id
+  limit 1
+$$;
+
+create or replace function public.current_student_attendance_group()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select student->>'group'
+  from public.profiles profile
+  join public.class_data class on class.class_id = profile.class_id
+  cross join lateral jsonb_array_elements(
+    case when jsonb_typeof(class.state->'students') = 'array' then class.state->'students' else '[]'::jsonb end
+  ) student
+  where profile.id = (select auth.uid())
+    and student->>'id' = profile.student_id
+  limit 1
+$$;
+
+create or replace function public.can_access_attendance_student(target_student_id text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    public.current_role() = 'gvcn'
+    or public.current_student_id() = target_student_id
+    or (
+      public.current_role() = 'bcs'
+      and (
+        position('lớp trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+        or (
+          position('tổ trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+          and exists (
+            select 1
+            from public.profiles profile
+            join public.class_data class on class.class_id = profile.class_id
+            cross join lateral jsonb_array_elements(
+              case when jsonb_typeof(class.state->'students') = 'array' then class.state->'students' else '[]'::jsonb end
+            ) student
+            where profile.id = (select auth.uid())
+              and student->>'id' = target_student_id
+              and student->>'group' = public.current_student_attendance_group()
+          )
+        )
+      )
+    )
+$$;
+
 alter table public.profiles enable row level security;
 alter table public.class_data enable row level security;
 alter table public.grades enable row level security;
 alter table public.class_reminders enable row level security;
-revoke all on table public.profiles, public.class_data, public.grades, public.class_reminders from public, anon, authenticated;
+alter table public.attendance_records enable row level security;
+revoke all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.attendance_records from public, anon, authenticated;
 
 drop policy if exists "profiles_read_own_or_teacher" on public.profiles;
 create policy "profiles_read_own_or_teacher"
@@ -165,11 +245,107 @@ create policy "grades_teacher_update"
   using (public.current_role() = 'gvcn' and class_id = public.current_class_id())
   with check (public.current_role() = 'gvcn' and class_id = public.current_class_id());
 
+drop policy if exists "attendance_read_authorized_students" on public.attendance_records;
+create policy "attendance_read_authorized_students"
+  on public.attendance_records for select to authenticated
+  using (
+    class_id = public.current_class_id() and
+    public.can_access_attendance_student(student_id)
+  );
+
+drop policy if exists "attendance_insert_authorized_students" on public.attendance_records;
+create policy "attendance_insert_authorized_students"
+  on public.attendance_records for insert to authenticated
+  with check (
+    class_id = public.current_class_id() and
+    public.can_access_attendance_student(student_id) and
+    updated_by = (select auth.uid()) and
+    (
+      public.current_role() = 'gvcn'
+      or (
+        public.current_role() = 'bcs'
+        and (
+          position('lớp trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+          or position('tổ trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+        )
+      )
+      or (
+        student_id = public.current_student_id()
+        and status = 'present'
+      )
+    )
+  );
+
+drop policy if exists "attendance_update_authorized_students" on public.attendance_records;
+create policy "attendance_update_authorized_students"
+  on public.attendance_records for update to authenticated
+  using (
+    class_id = public.current_class_id() and
+    public.can_access_attendance_student(student_id)
+  )
+  with check (
+    class_id = public.current_class_id() and
+    public.can_access_attendance_student(student_id) and
+    updated_by = (select auth.uid()) and
+    (
+      public.current_role() = 'gvcn'
+      or (
+        public.current_role() = 'bcs'
+        and (
+          position('lớp trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+          or position('tổ trưởng' in lower(coalesce(public.current_student_attendance_role(), ''))) > 0
+        )
+      )
+      or (
+        student_id = public.current_student_id()
+        and status = 'present'
+      )
+    )
+  );
+
+drop policy if exists "attendance_delete_authorized_students" on public.attendance_records;
+create policy "attendance_delete_authorized_students"
+  on public.attendance_records for delete to authenticated
+  using (
+    class_id = public.current_class_id() and
+    public.can_access_attendance_student(student_id)
+  );
+
 grant select on public.profiles, public.class_data, public.grades, public.class_reminders to authenticated;
 grant insert, update, delete on public.class_data to authenticated;
 grant insert, update on public.grades to authenticated;
-revoke all on function public.current_class_id(), public.current_role(), public.current_student_id() from public, anon;
-grant execute on function public.current_class_id(), public.current_role(), public.current_student_id() to authenticated;
+grant select, insert, update, delete on public.attendance_records to authenticated;
+revoke all on function public.current_class_id(), public.current_role(), public.current_student_id(),
+  public.current_student_attendance_role(), public.current_student_attendance_group(),
+  public.can_access_attendance_student(text) from public, anon;
+grant execute on function public.current_class_id(), public.current_role(), public.current_student_id(),
+  public.current_student_attendance_role(), public.current_student_attendance_group(),
+  public.can_access_attendance_student(text) to authenticated;
+
+insert into public.attendance_records (class_id, attendance_date, session, student_id, status, updated_by)
+select
+  class.class_id,
+  split_part(day.key, '_', 1)::date,
+  split_part(day.key, '_', 2),
+  attendance.key,
+  attendance.value #>> '{}',
+  (select id from public.profiles where class_id = class.class_id and role = 'gvcn' order by created_at limit 1)
+from public.class_data class
+cross join lateral jsonb_each(
+  case when jsonb_typeof(class.state->'attendanceRecords') = 'object' then class.state->'attendanceRecords' else '{}'::jsonb end
+) day
+cross join lateral jsonb_each(
+  case when jsonb_typeof(day.value) = 'object' then day.value else '{}'::jsonb end
+) attendance
+where day.key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}_(Sáng|Chiều)$'
+  and attendance.value #>> '{}' in ('present', 'late', 'excused', 'unexcused')
+on conflict (class_id, attendance_date, session, student_id)
+do update set status = excluded.status, updated_at = now();
+
+update public.class_data
+set state = state - 'attendanceRecords'
+where state ? 'attendanceRecords';
+
 notify pgrst, 'reload schema';
 
 -- After creating the GVCN Auth user, run supabase/create-gvcn-profile.sql
