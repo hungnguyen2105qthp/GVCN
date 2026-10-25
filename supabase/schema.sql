@@ -33,6 +33,7 @@ create table if not exists public.grades (
   midterm numeric(3, 1) check (midterm between 0 and 10),
   final numeric(3, 1) check (final between 0 and 10),
   reported_average numeric(3, 1) check (reported_average between 0 and 10),
+  average_visible boolean not null default false,
   comment text not null default '',
   updated_at timestamptz not null default now(),
   unique (class_id, student_id, subject, academic_year, semester)
@@ -49,6 +50,9 @@ alter table public.grades
 alter table public.grades
   add column if not exists reported_average numeric(3, 1)
   check (reported_average between 0 and 10);
+
+alter table public.grades
+  add column if not exists average_visible boolean not null default false;
 
 create table if not exists public.class_reminders (
   id uuid primary key default gen_random_uuid(),

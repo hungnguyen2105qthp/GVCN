@@ -1,4 +1,4 @@
-# Thanh Xuân 12C1
+# 12C1 K60 QT
 
 ## Deploy to Vercel with Supabase
 
@@ -8,7 +8,7 @@ The static page alone cannot share data between browsers. Vercel serves the page
 
 1. Create a Supabase project.
 2. Open **SQL Editor**, run [`supabase/schema.sql`](./supabase/schema.sql).
-   If the project already has the previous schema, run the updated file again to create the reminders table and its access policy, and add the imported-average and regular-score 4–5 grade columns. The script reloads the PostgREST schema cache after applying changes. Grade entry can retry without the imported-average column on older databases, but regular-score 4–5 require this migration.
+   If the project already has the previous schema, run the updated file again to create the reminders table and its access policy, and add the imported-average, average-visibility, and regular-score 4–5 grade columns. Average visibility is off by default; GVCN can explicitly publish each subject's average to the linked student. The script reloads the PostgREST schema cache after applying changes. Regular-score 4–5 require this migration.
 3. In **Authentication → Providers → Email**, disable public sign-ups.
 4. Run the setup command from the repository root:
 
@@ -36,11 +36,13 @@ After signing in as GVCN, use **Đổi banner** on the top banner to upload a wi
 - Before the first GVCN sign-in, use **Tải dữ liệu cũ** on the old browser/origin to export its backup, then **Chọn tệp backup JSON** on the deployed page. The first GVCN sign-in copies that `classManagerData` and eligible student/BCS accounts into the class database if there is no class row yet. A backup can be explicitly confirmed to replace an existing class row. Accounts with passwords shorter than six characters are not imported and must be recreated. Browser storage from another browser/device or origin cannot be read by Vercel without this export/import step.
 - New student/BCS accounts can be created from **Cài đặt → Quản lý tài khoản**. Use passwords of at least six characters.
 - Each student/BCS profile is linked to one existing student ID. Only GVCN should create or link accounts.
-- In **Điểm học tập**, GVCN can download the Excel template, fill in the class grades, and import the completed file. In **Thời khóa biểu**, click a subject to add a reminder for its exact date; students see new reminders in the top-right bell, which refreshes while the page is open.
+- In **Điểm học tập**, GVCN can download the Excel template, fill in the class grades, and import the completed file. Students see every subject in one view; GVCN can publish or hide the semester average for each student and subject.
+- In **Thời khóa biểu**, click a subject to add a reminder for its exact date, select a group and individual recipients, and edit reminders later. Students see only reminders addressed to them in the top-right bell, which refreshes while the page is open. The home-page class reminder supports the same group/member selection, and GVCN can edit its text.
+- In **Điểm danh → Bảng thống kê**, select a month or a week to view attendance by exact date. GVCN can click a date heading to open that session and edit its attendance.
 
 Grades live in a separate table. GVCN can read and write every grade in their class; a student or class officer can read only rows linked to their own student ID. Class officers cannot read classmates' grades, even by querying the database directly.
 
-Class reminders are stored in `class_reminders`. GVCN can send them to the whole class or selected students; class leaders can address the class or selected students; group leaders can only address members of their own group. Students and class officers can read only reminders addressed to their linked student ID. The server validates sender permissions and recipient IDs, and database row-level security limits which reminders each account can read. On an existing project, run [`supabase/add-class-reminders.sql`](./supabase/add-class-reminders.sql) once in the Supabase SQL Editor. New projects get the same table from `schema.sql`. Configure `SUPABASE_SERVICE_ROLE_KEY` for the `/api/reminders` server function.
+Class reminders are stored in `class_reminders`. GVCN can send reminders to the whole class or selected students, edit reminder text, and filter recipients by group; class leaders can address the class or selected students; group leaders can only address members of their own group. Students and class officers can read only reminders addressed to their linked student ID. The server validates sender permissions and recipient IDs, and database row-level security limits which reminders each account can read. On an existing project, run [`supabase/add-class-reminders.sql`](./supabase/add-class-reminders.sql) once in the Supabase SQL Editor. New projects get the same table from `schema.sql`. Configure `SUPABASE_SERVICE_ROLE_KEY` for the `/api/reminders` server function.
 
 ## Local preview
 

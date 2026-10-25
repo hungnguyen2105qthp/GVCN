@@ -368,6 +368,9 @@
     if (/regular_[45]/i.test(message) && /column|schema cache|PGRST204/i.test(message)) {
       return "Database chưa có cột điểm thường xuyên 4 và 5. Hãy chạy lại supabase/schema.sql trong Supabase SQL Editor rồi tải lại trang.";
     }
+    if (/average_visible/i.test(message) && /column|schema cache|PGRST204/i.test(message)) {
+      return "Database chưa có cột quyền công bố ĐTBmhk. Hãy chạy lại supabase/schema.sql trong Supabase SQL Editor rồi tải lại trang.";
+    }
     return message || fallback;
   }
 
@@ -435,7 +438,13 @@
       <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold text-slate-600">${escapeHtmlText(student.code || "—")}</td>
       <td class="min-w-48 border border-slate-200 bg-slate-50 px-3 py-3 font-bold text-slate-800">${window.getStudentDisplayName ? window.getStudentDisplayName(student) : escapeHtmlText(student.name || "Học sinh")}</td>
       ${cells}
-      <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"}</td>
+      <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">
+        ${isTeacher()
+          ? `<div class="flex flex-col items-center gap-1"><span>${escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"}</span><label class="flex cursor-pointer items-center gap-1 text-[10px] font-bold text-slate-500"><input type="checkbox" ${row.average_visible === true ? "checked" : ""} aria-label="Hiện điểm trung bình với ${escapeHtmlText(student.name)}" onchange="saveGradeVisibility(this.dataset.studentId,this.checked)" data-student-id="${escapeHtmlText(student.id)}" class="accent-teal-700">Hiện với học sinh</label></div>`
+          : row.average_visible === true
+            ? escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"
+            : `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`}
+      </td>
       <td class="min-w-64 border border-slate-200 bg-white p-2">
         ${isTeacher()
           ? `<textarea aria-label="Nhận xét - ${escapeHtmlText(student.name)}" data-student-id="${escapeHtmlText(student.id)}" rows="2" class="w-full resize-y rounded-lg border border-slate-200 p-2 text-sm outline-none focus:border-teal-500" onchange="saveGradeField(this.dataset.studentId,'comment',this.value)">${escapeHtmlText(row.comment || "")}</textarea>`
@@ -459,14 +468,49 @@
       semester: (document.getElementById("grade-semester") || {}).value || "HK1",
     };
     const roleHeading = isTeacher() ? "BẢNG NHẬP ĐIỂM CẢ LỚP" : "KẾT QUẢ HỌC TẬP CỦA BẠN";
+    const subjects = ["Toán", "Ngữ văn", "Tiếng Anh", "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học", "Khác"];
+    const visibleSubjects = isTeacher()
+      ? [context.subject]
+      : [...new Set([
+        ...subjects,
+        ...(state.gradeRows || []).map(row => row.subject).filter(Boolean),
+      ])];
+    const renderTable = (subject) => {
+      const subjectContext = { ...context, subject };
+      return `<div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        ${!isTeacher() ? `<h3 class="border-b border-slate-100 bg-emerald-50 px-5 py-3 text-lg font-black text-emerald-900">${escapeHtmlText(subject)}</h3>` : ""}
+        <div class="overflow-x-auto">
+          <table class="min-w-[1220px] border-collapse text-sm">
+            <thead class="bg-sky-700 text-white">
+              <tr>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">STT</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">Mã định danh Bộ GD&amp;ĐT</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">Họ tên</th>
+                <th colspan="5" class="border border-white/20 px-3 py-2">ĐĐGtx</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGgk</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGck</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐTBmhk</th>
+                <th rowspan="2" class="border border-white/20 px-3 py-3">Nhận xét sự tiến bộ, ưu điểm nổi bật, hạn chế chủ yếu</th>
+              </tr>
+              <tr>${["1", "2", "3", "4", "5"].map(label => `<th class="border border-white/20 px-3 py-2">${label}</th>`).join("")}</tr>
+            </thead>
+            <tbody>${students.length
+              ? students.map((student, index) => renderGradeRow(student, index, subjectContext)).join("")
+              : `<tr><td colspan="12" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">Điểm trung bình hiển thị theo file nếu có; nếu không, hệ thống tính theo trọng số từ các điểm thành phần.</div>
+      </div>`;
+    };
 
     return `<section class="animate-fade-in space-y-5">
       <div class="flex flex-col gap-4 rounded-3xl bg-gradient-to-r from-emerald-900 to-teal-800 p-6 text-white shadow-lg md:flex-row md:items-center md:justify-between">
         <h2 class="text-2xl font-black">${roleHeading}</h2>
         <div class="flex flex-wrap gap-2">
-          <select id="grade-subject" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
-            ${["Toán", "Ngữ văn", "Tiếng Anh", "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học", "Khác"].map(subject => `<option class="text-slate-900" ${context.subject === subject ? "selected" : ""}>${subject}</option>`).join("")}
-          </select>
+          ${isTeacher() ? `<select id="grade-subject" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
+            ${subjects.map(subject => `<option class="text-slate-900" ${context.subject === subject ? "selected" : ""}>${subject}</option>`).join("")}
+          </select>` : ""}
           <select id="grade-year" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             <option class="text-slate-900" ${context.academic_year === years ? "selected" : ""}>${escapeHtmlText(years)}</option>
           </select>
@@ -495,32 +539,7 @@
         </div>
         <div id="grade-import-status" class="mt-3"></div>
       </div>` : ""}
-      <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div class="overflow-x-auto">
-          <table class="min-w-[1220px] border-collapse text-sm">
-            <thead class="bg-sky-700 text-white">
-              <tr>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">STT</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">Mã định danh Bộ GD&amp;ĐT</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">Họ tên</th>
-                <th colspan="5" class="border border-white/20 px-3 py-2">ĐĐGtx</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGgk</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐĐGck</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">ĐTBmhk</th>
-                <th rowspan="2" class="border border-white/20 px-3 py-3">Nhận xét sự tiến bộ, ưu điểm nổi bật, hạn chế chủ yếu</th>
-              </tr>
-              <tr>${["1", "2", "3", "4", "5"].map(label => `<th class="border border-white/20 px-3 py-2">${label}</th>`).join("")}</tr>
-            </thead>
-            <tbody>${students.length
-              ? students.map((student, index) => renderGradeRow(student, index, context)).join("")
-              : `<tr><td colspan="12" class="p-10 text-center font-semibold text-slate-500">${isTeacher() ? "Chưa có học sinh trong danh sách lớp." : "Tài khoản này chưa được liên kết với hồ sơ học sinh."}</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-        <div class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          Điểm trung bình hiển thị theo file nếu có; nếu không, hệ thống tính theo trọng số từ các điểm thành phần.
-        </div>
-      </div>
+      <div class="space-y-5">${visibleSubjects.map(renderTable).join("")}</div>
     </section>`;
   };
 
@@ -562,6 +581,35 @@
         ...context,
         [field]: value,
         updated_at: new Date().toISOString(),
+      };
+
+      window.saveGradeVisibility = async function (studentId, visible) {
+        if (!isTeacher()) {
+          showToast("Chỉ GVCN được công bố hoặc ẩn điểm trung bình.", "error");
+          await window.loadGrades();
+          renderLayout();
+          return;
+        }
+        try {
+          const context = selectedContext();
+          const existing = gradeFor(studentId, context);
+          const record = {
+            ...existing,
+            class_id: state.cloudProfile.class_id,
+            student_id: String(studentId),
+            ...context,
+            average_visible: Boolean(visible),
+            updated_at: new Date().toISOString(),
+          };
+          delete record.id;
+          await upsertGradeRecords(await window.cloudReady, [record]);
+          await window.loadGrades();
+          showToast(visible ? "Đã công bố điểm trung bình cho học sinh." : "Đã ẩn điểm trung bình với học sinh.", "success");
+        } catch (error) {
+          console.error("Không thể cập nhật quyền xem điểm trung bình:", error);
+          showToast(gradeSaveErrorMessage(error, "Không thể cập nhật quyền xem điểm trung bình. Hãy chạy lại supabase/schema.sql."), "error");
+          await window.loadGrades();
+        }
       };
       if (field !== "comment") record.reported_average = null;
       delete record.id;

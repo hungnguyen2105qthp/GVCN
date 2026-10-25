@@ -18,8 +18,8 @@ async function readJson(response) {
 
 module.exports = async function handler(request, response) {
   response.setHeader("Cache-Control", "no-store");
-  if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
+  if (!["POST", "PUT"].includes(request.method)) {
+    response.setHeader("Allow", "POST, PUT");
     json(response, 405, { error: "Phương thức không được hỗ trợ." });
     return;
   }
@@ -62,6 +62,37 @@ module.exports = async function handler(request, response) {
     }
 
     const body = request.body || {};
+    if (request.method === "PUT") {
+      if (profile.role !== "gvcn") {
+        json(response, 403, { error: "Chỉ GVCN mới được sửa lời nhắc." });
+        return;
+      }
+      const reminderId = String(body.id || "").trim();
+      const message = String(body.message || "").trim();
+      if (!reminderId || !message || message.length > 500) {
+        json(response, 400, { error: "Lời nhắc cần có mã hợp lệ và nội dung từ 1 đến 500 ký tự." });
+        return;
+      }
+      const updateUrl = new URL(`${url}/rest/v1/class_reminders`);
+      updateUrl.searchParams.set("id", `eq.${reminderId}`);
+      updateUrl.searchParams.set("class_id", `eq.${profile.class_id}`);
+      const updateResponse = await fetch(updateUrl, {
+        method: "PATCH",
+        headers: supabaseHeaders(serviceKey, { Prefer: "return=representation" }),
+        body: JSON.stringify({ message }),
+      });
+      const updated = await readJson(updateResponse);
+      if (!updateResponse.ok) {
+        throw new Error(updated && updated.message ? updated.message : "Không thể sửa lời nhắc.");
+      }
+      if (!Array.isArray(updated) || !updated.length) {
+        json(response, 404, { error: "Không tìm thấy lời nhắc trong lớp." });
+        return;
+      }
+      json(response, 200, { ok: true });
+      return;
+    }
+
     const message = String(body.message || "").trim();
     const recipientIds = Array.isArray(body.recipientIds)
       ? [...new Set(body.recipientIds.map(id => String(id).trim()).filter(Boolean))]

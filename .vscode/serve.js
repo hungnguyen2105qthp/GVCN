@@ -64,7 +64,7 @@ async function handleApi(request, response, pathname) {
     return;
   }
 
-  if (request.method === "POST") {
+  if (["POST", "PUT"].includes(request.method)) {
     try {
       request.body = await readJsonBody(request);
     } catch (error) {

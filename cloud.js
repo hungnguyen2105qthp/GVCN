@@ -48,18 +48,18 @@
     return result;
   };
 
-  window.cloudReminderRequest = async function (payload) {
+  window.cloudReminderRequest = async function (payload, method = "POST") {
     const client = await window.cloudReady;
     const { data } = await client.auth.getSession();
     const token = data.session && data.session.access_token;
     if (!token) throw new Error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
     const response = await fetch("/api/reminders", {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Không thể gửi lời nhắc.");
+    if (!response.ok) throw new Error(result.error || (method === "PUT" ? "Không thể sửa lời nhắc." : "Không thể gửi lời nhắc."));
     return result;
   };
 
