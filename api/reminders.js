@@ -19,8 +19,8 @@ async function readJson(response) {
 
 module.exports = async function handler(request, response) {
   response.setHeader("Cache-Control", "no-store");
-  if (!["POST", "PUT"].includes(request.method)) {
-    response.setHeader("Allow", "POST, PUT");
+  if (!["POST", "PUT", "DELETE"].includes(request.method)) {
+    response.setHeader("Allow", "POST, PUT, DELETE");
     json(response, 405, { error: "Phương thức không được hỗ trợ." });
     return;
   }
@@ -75,6 +75,35 @@ module.exports = async function handler(request, response) {
     }
 
     const body = request.body || {};
+    if (request.method === "DELETE") {
+      if (profile.role !== "gvcn") {
+        json(response, 403, { error: "Chỉ GVCN mới được xóa lời nhắc." });
+        return;
+      }
+      const reminderId = String(body.id || "").trim();
+      if (!reminderId) {
+        json(response, 400, { error: "Lời nhắc cần có mã hợp lệ để xóa." });
+        return;
+      }
+      const deleteUrl = new URL(`${url}/rest/v1/class_reminders`);
+      deleteUrl.searchParams.set("id", `eq.${reminderId}`);
+      deleteUrl.searchParams.set("class_id", `eq.${profile.class_id}`);
+      const deleteResponse = await fetch(deleteUrl, {
+        method: "DELETE",
+        headers: supabaseHeaders(serviceKey, { Prefer: "return=representation" }),
+      });
+      const deleted = await readJson(deleteResponse);
+      if (!deleteResponse.ok) {
+        throw new Error(deleted && deleted.message ? deleted.message : "Không thể xóa lời nhắc.");
+      }
+      if (!Array.isArray(deleted) || !deleted.length) {
+        json(response, 404, { error: "Không tìm thấy lời nhắc trong lớp." });
+        return;
+      }
+      json(response, 200, { ok: true });
+      return;
+    }
+
     if (request.method === "PUT") {
       if (profile.role !== "gvcn") {
         json(response, 403, { error: "Chỉ GVCN mới được sửa lời nhắc." });

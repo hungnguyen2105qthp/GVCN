@@ -59,7 +59,14 @@
       body: JSON.stringify(payload),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || (method === "PUT" ? "Không thể sửa lời nhắc." : "Không thể gửi lời nhắc."));
+    if (!response.ok) {
+      const fallbackMessage = method === "PUT"
+        ? "Không thể sửa lời nhắc."
+        : method === "DELETE"
+          ? "Không thể xóa lời nhắc."
+          : "Không thể gửi lời nhắc.";
+      throw new Error(result.error || fallbackMessage);
+    }
     return result;
   };
 
