@@ -437,6 +437,43 @@
     </tr>`;
   }
 
+  function renderStudentGradesTable(student, subjects, context) {
+    if (!student) {
+      return `<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center font-semibold text-slate-500">Tài khoản này chưa được liên kết với hồ sơ học sinh.</div>`;
+    }
+    const rows = subjects.map(subject => {
+      const row = gradeFor(student.id, { ...context, subject });
+      const scores = GRADE_COLUMNS.map(([field]) => {
+        const value = row[field] ?? "";
+        return `<td class="border border-slate-200 px-3 py-3 text-center font-bold text-slate-800">${value === "" ? "—" : escapeHtmlText(value)}</td>`;
+      }).join("");
+      const average = row.average_visible === true
+        ? escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"
+        : `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`;
+      return `<tr class="hover:bg-teal-50/40">
+        <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${escapeHtmlText(student.name || "Học sinh")}</td>
+        <td class="border border-slate-200 bg-emerald-50 px-3 py-3 font-black text-emerald-900">${escapeHtmlText(subject)}</td>
+        ${scores}
+        <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${average}</td>
+        <td class="min-w-52 border border-slate-200 px-3 py-3 text-sm text-slate-600">${escapeHtmlText(row.comment || "Chưa có nhận xét")}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <table class="min-w-[1150px] border-collapse text-sm">
+        <thead class="bg-sky-700 text-white"><tr>
+          <th class="border border-white/20 px-3 py-3">Họ tên</th>
+          <th class="border border-white/20 px-3 py-3">Môn học</th>
+          ${GRADE_COLUMNS.slice(0, 5).map(([, label]) => `<th class="border border-white/20 px-3 py-3">TX ${label}</th>`).join("")}
+          <th class="border border-white/20 px-3 py-3">Giữa kỳ</th>
+          <th class="border border-white/20 px-3 py-3">Cuối kỳ</th>
+          <th class="border border-white/20 px-3 py-3">ĐTB</th>
+          <th class="border border-white/20 px-3 py-3">Nhận xét</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }
+
   window.renderGradesView = function () {
     let students = isTeacher()
       ? teacherGradeScopeStudents()
@@ -542,7 +579,9 @@
         </div>
         <div id="grade-import-status" class="mt-3"></div>
       </div>` : ""}
-      <div class="space-y-5">${visibleSubjects.map(renderTable).join("")}</div>
+      ${isTeacher()
+        ? `<div class="space-y-5">${visibleSubjects.map(renderTable).join("")}</div>`
+        : renderStudentGradesTable(students[0], visibleSubjects, context)}
     </section>`;
   };
 

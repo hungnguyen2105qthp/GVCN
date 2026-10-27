@@ -210,14 +210,13 @@
 
         const menuItems = [
             { id: 'tong-quan', icon: 'ph-squares-four', label: 'Trang chủ' },
-            { id: 'diem-so', icon: 'ph-read-cv-logo', label: 'Điểm học tập' },
+            { id: 'diem-so', icon: 'ph-read-cv-logo', label: 'KQ học tập' },
             { id: 'hoc-sinh', icon: 'ph-users', label: 'Học sinh' },
             { id: 'thoi-khoa-bieu', icon: 'ph-calendar-list', label: 'Thời khóa biểu' },
             { id: 'so-do-lop', icon: 'ph-grid-four', label: 'Sơ đồ lớp' },
             { id: 'tro-choi', icon: 'ph-game-controller', label: 'Trò chơi' },
             { id: 'nhom-thi-dua', icon: 'ph-flag-pennant', label: 'Tổ thi đua' },
             { id: 'diem-danh', icon: 'ph-calendar-check', label: 'Điểm danh' },
-            { id: 'dong-ho', icon: 'ph-timer', label: 'Công cụ' },
             { id: 'lich-bao-giang', icon: 'ph-notebook', label: 'Lịch báo giảng' },
            { id: 'xep-hang', icon: 'ph-trophy', label: 'Tuyên Dương' },
             { id: 'ke-hoach', icon: 'ph-calendar-star', label: 'Kế hoạch tuần' }, // <--- THÊM DÒNG NÀY
@@ -225,6 +224,46 @@
             { id: 'tram-dong-hanh', icon: 'ph-hands-clapping', label: 'Trạm đồng hành' },
             { id: 'cai-dat', icon: 'ph-gear', label: 'Cài đặt' }
         ];
+
+        const navigationGroups = [
+            { label: 'Trang chủ', icon: 'ph-squares-four', items: [{ id: 'tong-quan', label: 'Trang chủ' }] },
+            { label: 'Học sinh', icon: 'ph-users', items: [{ id: 'hoc-sinh', label: 'Danh sách hồ sơ' }, { id: 'so-do-lop', label: 'Sơ đồ lớp' }] },
+            { label: 'Thời khóa biểu', icon: 'ph-calendar-list', items: [{ id: 'thoi-khoa-bieu', label: 'Thời khóa biểu' }] },
+            { label: 'KQ học tập', icon: 'ph-read-cv-logo', items: [{ id: 'diem-so', label: 'KQ học tập' }] },
+            { label: 'KQ rèn luyện', icon: 'ph-chart-bar', items: [{ id: 'bao-cao', label: 'KQ rèn luyện' }] },
+            { label: 'Sổ theo dõi', icon: 'ph-notebook', items: [
+                { id: 'diem-danh', label: 'Điểm danh' },
+                { id: 'tich-diem', label: 'Theo dõi cá nhân' },
+                { id: 'nhom-thi-dua', label: 'Tổ thi đua' },
+                { id: 'xep-hang', label: 'Tuyên dương' }
+            ] },
+            { label: 'Trò chơi', icon: 'ph-game-controller', items: [
+                { id: 'tro-choi', label: 'Trò chơi' },
+                { id: 'doi-qua', label: 'Đổi quà' },
+                { id: 'vong-quay', label: 'Vòng quay' },
+                { id: 'dong-ho', label: 'Công cụ', action: 'openTimerDrawer()' }
+            ] },
+            { label: 'Khác', icon: 'ph-dots-three', items: [
+                { id: 'lich-bao-giang', label: 'Lịch báo giảng' },
+                { id: 'ke-hoach', label: 'Kế hoạch tuần' },
+                { id: 'tram-dong-hanh', label: 'Trạm đồng hành' },
+                { id: 'cai-dat', label: 'Cài đặt' }
+            ] }
+        ];
+
+        function getNavigationGroups() {
+            const role = state.auth && state.auth.role;
+            const allowedByRole = {
+                hocsinh: ['tong-quan', 'hoc-sinh', 'so-do-lop', 'thoi-khoa-bieu', 'diem-so', 'bao-cao', 'diem-danh'],
+                bcs: ['tong-quan', 'diem-so', 'hoc-sinh', 'so-do-lop', 'thoi-khoa-bieu', 'diem-danh'],
+                bgh: ['tong-quan', 'hoc-sinh', 'so-do-lop', 'diem-danh', 'bao-cao', 'tram-dong-hanh']
+            };
+            const allowed = allowedByRole[role];
+            return navigationGroups.map(group => ({
+                ...group,
+                items: group.items.filter(item => !allowed || allowed.includes(item.id))
+            })).filter(group => group.items.length);
+        }
 
         function escapeInlineJs(str) { return str ? String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n').replace(/\r/g, '\\r') : ''; }
         function escapeHtmlAttr(str) { return str ? String(str).replace(/"/g, '&quot;') : ''; }
@@ -448,6 +487,30 @@
             state.classReminders = data || [];
         };
 
+        window.startClassReminderSync = function() {
+            if (window.classReminderSyncInterval) clearInterval(window.classReminderSyncInterval);
+            if (!state.auth || !state.auth.loggedIn || state.auth.role === 'gvcn') return;
+            window.classReminderSyncInterval = setInterval(async () => {
+                try {
+                    const previous = JSON.stringify(state.classReminders || []);
+                    await window.loadClassReminders();
+                    window.classReminderSyncErrorShown = false;
+                    const changed = previous !== JSON.stringify(state.classReminders || []);
+                    if (changed) {
+                        window.notifyNewClassReminders();
+                        if (state.currentTab === 'tong-quan' || state.showReminderNotifications) renderLayout();
+                        else updateClassReminderNotificationControl();
+                    }
+                } catch (error) {
+                    console.error('Không thể đồng bộ lời nhắc của lớp:', error);
+                    if (!window.classReminderSyncErrorShown) {
+                        window.classReminderSyncErrorShown = true;
+                        showToast(error.message || 'Không thể đồng bộ lời nhắc của lớp.', 'error');
+                    }
+                }
+            }, 30000);
+        };
+
         window.notifyNewClassReminders = function() {
             const userId = String(state.auth && state.auth.userId || '');
             if (!userId) return;
@@ -653,7 +716,10 @@
             const nextReminders = reminders && typeof reminders === 'object' && !Array.isArray(reminders) ? reminders : {};
             const changed = JSON.stringify(nextReminders) !== JSON.stringify(state.timetableReminders || {});
             state.timetableReminders = nextReminders;
-            if (changed) updateClassReminderNotificationControl();
+            if (changed) {
+                if (state.currentTab === 'thoi-khoa-bieu') renderLayout();
+                else updateClassReminderNotificationControl();
+            }
             if (notify) notifyNewTimetableReminders();
         };
 
@@ -1049,7 +1115,7 @@ function renderHeader() {
     return `
         <header class="glass sticky top-0 px-6 py-4 flex justify-between items-center z-10 flex-shrink-0 print:hidden shadow-sm">
             <div class="flex items-center gap-3">
-                <h2 class="text-xl font-black text-slate-800 tracking-tight hidden md:block capitalize">${menuItems.find(m => m.id === state.currentTab)?.label || 'Bảng điều khiển'}</h2>
+                <h2 class="text-xl font-black text-slate-800 tracking-tight hidden md:block capitalize">${navigationGroups.flatMap(group => group.items).find(item => item.id === state.currentTab)?.label || 'Bảng điều khiển'}</h2>
             </div>
             
            <div class="flex items-center gap-4">
@@ -1092,19 +1158,24 @@ function renderHeader() {
         };
 
 function renderHorizontalNav() {
-    let activeMenuItems = menuItems;
-    if (state.auth && (state.auth.role === 'hocsinh' || state.auth.role === 'bcs')) {
-        activeMenuItems = menuItems.filter(item => ['tong-quan', 'diem-so', 'hoc-sinh', 'thoi-khoa-bieu', 'so-do-lop', 'diem-danh'].includes(item.id));
-    } else if (state.auth && state.auth.role === 'bgh') {
-        activeMenuItems = menuItems.filter(item => ['tong-quan', 'hoc-sinh', 'so-do-lop', 'diem-danh', 'bao-cao', 'tram-dong-hanh'].includes(item.id));
-    }
-    const links = activeMenuItems.map(item => {
-        const active = state.currentTab === item.id ||
-            (item.id === 'tro-choi' && ['doi-qua', 'vong-quay'].includes(state.currentTab));
-        const action = item.id === 'dong-ho' ? 'openTimerDrawer()' : `switchTab('${item.id}')`;
-        return `<button onclick="${action}" class="flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-colors ${active ? 'bg-emerald-100 text-emerald-950 shadow-sm' : 'text-emerald-50 hover:bg-white/10 hover:text-white'}">
-            <i class="ph-fill ${item.icon} text-base"></i><span>${item.label}</span>
-        </button>`;
+    const links = getNavigationGroups().map(group => {
+        const items = group.items;
+        if (!items.length) return '';
+        const active = items.some(item => item.id === state.currentTab ||
+            (item.id === 'tro-choi' && ['doi-qua', 'vong-quay'].includes(state.currentTab)));
+        if (items.length === 1 && !items[0].action) {
+            const item = items[0];
+            return `<button onclick="switchTab('${item.id}')" class="flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-colors ${active ? 'bg-emerald-100 text-emerald-950 shadow-sm' : 'text-emerald-50 hover:bg-white/10 hover:text-white'}">
+                <i class="ph-fill ${group.icon} text-base"></i><span>${group.label}</span>
+            </button>`;
+        }
+        const childLinks = items.map(item => `<button type="button" onclick="${item.action || `switchTab('${item.id}')`}" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:text-emerald-900">${item.label}</button>`).join('');
+        return `<details class="group relative shrink-0">
+            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-colors ${active ? 'bg-emerald-100 text-emerald-950 shadow-sm' : 'text-emerald-50 hover:bg-white/10 hover:text-white'}">
+                <i class="ph-fill ${group.icon} text-base"></i><span>${group.label}</span><i class="ph-bold ph-caret-down text-[10px]"></i>
+            </summary>
+            <div class="absolute left-0 top-full z-[70] mt-1 min-w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">${childLinks}</div>
+        </details>`;
     }).join('');
     const studentCount = (state.students || []).length;
     const auth = state.auth || {};
@@ -1119,8 +1190,8 @@ function renderHorizontalNav() {
             </div>
             ${renderClassReminderNotifications()}
         </div>
-        <nav aria-label="Điều hướng chính" class="custom-scrollbar overflow-x-auto border-t border-white/10 bg-emerald-950/35 px-3 py-1.5">
-            <div class="flex min-w-max items-center gap-1">${links}</div>
+        <nav aria-label="Điều hướng chính" class="overflow-visible border-t border-white/10 bg-emerald-950/35 px-3 py-1.5">
+            <div class="flex flex-wrap items-center gap-1">${links}</div>
         </nav>
     </section>`;
 }
@@ -1581,14 +1652,14 @@ function renderHorizontalNav() {
                     <h3 class="font-black text-lg text-slate-800 flex items-center gap-2 mb-6">⚡ TRUY CẬP NHANH</h3>
                     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                         <button onclick="switchTab('hoc-sinh')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">👨‍🎓</span> Học sinh</button>
-                        <button onclick="state.currentTab = 'cai-dat'; switchSettingsTab('tich-diem'); renderLayout();" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">💰</span> Tích điểm</button>
+                        <button onclick="switchTab('tich-diem')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">💰</span> Theo dõi cá nhân</button>
                         <button onclick="switchTab('thoi-khoa-bieu')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">📅</span> Thời khóa biểu</button>
                         <button onclick="switchTab('so-do-lop')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">🗺️</span> Sơ đồ lớp</button>
                         
                         <button onclick="switchTab('tram-dong-hanh')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">🤝</span> Trạm đồng hành</button>
                         <button onclick="switchTab('tro-choi')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">🎮</span> Trò chơi</button>
                         <button onclick="switchTab('bao-cao')" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">📊</span> Báo cáo</button>
-                        <button onclick="openTimerDrawer()" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">⏱️</span> Đồng hồ</button>
+                        <button onclick="switchTab('tro-choi'); openTimerDrawer()" class="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-sm font-bold text-slate-700 text-left"><span class="text-xl">⏱️</span> Công cụ trò chơi</button>
                     </div>
                 </div>
             </div>
@@ -1625,64 +1696,12 @@ function renderHorizontalNav() {
             else if (group.color.includes('purple')) borderColorClass = 'border-purple-400';
         }
         
-        const currentPoints = s.points || 0;
-        
-        let actionAreaHtml = '';
-        if (isBGH) {
-            actionAreaHtml = `
-                <div class="w-full mt-2 mb-6 px-4">
-                    <button onclick="openStudentHistoryModal(${s.id})" class="w-full py-2.5 bg-indigo-50 text-indigo-600 font-bold rounded-xl text-xs hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2 border border-indigo-100 shadow-sm">
-                        <i class="ph-bold ph-clock-counter-clockwise text-sm"></i> LỊCH SỬ ĐIỂM CỘNG TRỪ
-                    </button>
-                </div>
-            `;
-        } else {
-            const positiveList = state.criteria.positive.map(c => `
-                <button onclick="openPointReasonModal(${s.id},${c.points}, '${escapeInlineJs(c.category)}', 'add')" class="w-full text-left px-3 py-2 text-xs font-bold text-emerald-600 hover:bg-emerald-50 rounded-lg flex justify-between items-center gap-2 transition-colors">
-                    <span class="truncate">${c.reason}</span>
-                    <span class="flex-shrink-0 bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">+${c.points}</span>
-                </button>
-            `).join('');
-            const negativeList = state.criteria.negative.map(c => `
-                <button onclick="openPointReasonModal(${s.id},${c.points}, '${escapeInlineJs(c.category)}', 'subtract')" class="w-full text-left px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg flex justify-between items-center gap-2 transition-colors">
-                    <span class="truncate">${c.reason}</span>
-                    <span class="flex-shrink-0 bg-red-100 text-red-700 px-1.5 py-0.5 rounded">-${c.points}</span>
-                </button>
-            `).join('');
-
-            actionAreaHtml = `
-                <div class="flex items-center justify-center gap-4 w-full relative mb-6 px-4">
-                    <div class="relative w-full">
-                        <button onclick="toggleQuickMenu(event, 'quick-minus-${s.id}')" title="Trừ điểm" class="w-full h-10 rounded-xl bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-100 hover:text-red-600 transition-colors border border-red-100 font-black text-lg shadow-sm">
-                            <i class="ph-bold ph-minus"></i>
-                        </button>
-                        <div id="quick-minus-${s.id}" class="student-dropdown hidden absolute bottom-[calc(100%+8px)] left-0 w-60 bg-white border border-red-100 shadow-[0_10px_40px_rgba(239,68,68,0.15)] rounded-2xl z-50 p-2 max-h-56 overflow-y-auto custom-scrollbar animate-slide-up">
-                            <div class="text-[10px] text-red-400 font-bold uppercase tracking-widest px-2 pb-2 mb-2 border-b border-red-50 text-left">Chọn lý do trừ điểm:</div>
-                            ${negativeList || '<div class="text-xs text-slate-400 italic p-2 text-center">Chưa có mẫu</div>'}
-                        </div>
-                    </div>
-                    <div class="relative w-full">
-                        ${isBCS ? '<div class="h-10" aria-hidden="true"></div>' : `
-                        <button onclick="toggleQuickMenu(event, 'quick-plus-${s.id}')" title="Cộng điểm" class="w-full h-10 rounded-xl bg-emerald-50 text-emerald-500 flex items-center justify-center hover:bg-emerald-100 hover:text-emerald-600 transition-colors border border-emerald-100 font-black text-lg shadow-sm">
-                            <i class="ph-bold ph-plus"></i>
-                        </button>
-                        <div id="quick-plus-${s.id}" class="student-dropdown hidden absolute bottom-[calc(100%+8px)] right-0 w-60 bg-white border border-emerald-100 shadow-[0_10px_40px_rgba(16,185,129,0.15)] rounded-2xl z-50 p-2 max-h-56 overflow-y-auto custom-scrollbar animate-slide-up">
-                            <div class="text-[10px] text-emerald-500 font-bold uppercase tracking-widest px-2 pb-2 mb-2 border-b border-emerald-50 text-left">Chọn lý do cộng điểm:</div>
-                            ${positiveList || '<div class="text-xs text-slate-400 italic p-2 text-center">Chưa có mẫu</div>'}
-                        </div>
-                    `}
-                    </div>
-                </div>
-            `;
-        }
-
         return `
         <div class="self-start h-fit w-full bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200 border-t-4 border-t-${borderColorClass.replace('border-', '')} flex flex-col items-center relative hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
             
             <div class="absolute top-4 right-4 z-20">
                 <button onclick="toggleStudentMenu(event, ${s.id})" class="text-slate-300 hover:text-slate-600 p-1 rounded-full focus:outline-none transition-colors"><i class="ph-bold ph-dots-three-vertical text-xl"></i></button>
                 <div id="student-menu-${s.id}" class="student-dropdown hidden absolute right-0 mt-1 w-40 bg-white rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] border border-slate-100 overflow-hidden z-30 p-2 animate-fade-in">
-                    <button onclick="openStudentHistoryModal(${s.id})" class="w-full text-left px-3 py-2.5 text-sm text-emerald-600 hover:bg-slate-50 rounded-lg font-bold flex items-center gap-2.5"><i class="ph-bold ph-clock-counter-clockwise text-lg"></i> Lịch sử</button>
                     ${state.auth.role === 'gvcn' ? `<button onclick="deleteStudent(${s.id})" class="w-full text-left px-3 py-2.5 text-sm text-red-600 hover:bg-slate-50 rounded-lg font-bold flex items-center gap-2.5"><i class="ph-fill ph-trash text-lg"></i> Xóa</button>` : ''}
                 </div>
             </div>
@@ -1693,9 +1712,6 @@ function renderHorizontalNav() {
                 <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-md uppercase border border-slate-200">${s.group || 'Chưa nhóm'}</span>
                 <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-md border border-blue-100">${s.role || 'Thành viên'}</span>
             </div>
-            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 mt-2">TỔNG ĐIỂM</div>
-            <div class="text-4xl font-black text-[#1e1b4b] mb-6">${currentPoints}</div>${actionAreaHtml}
-            
             <button ${isBGH ? '' : isBCS ? `onclick="showParentView(${s.id})"` : `onclick="openEditStudentModal(${s.id})"`} class="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-xl text-xs flex items-center justify-center gap-2 border border-slate-200 mt-auto ${isBGH ? 'cursor-not-allowed opacity-70' : 'hover:bg-slate-100 transition-colors'}">
                 <i class="ph-bold ${isBGH ? 'ph-eye' : 'ph-identification-card'} text-sm"></i> ${isBGH ? 'CHỈ XEM HỒ SƠ' : 'XEM HỒ SƠ'}
             </button>
@@ -7978,7 +7994,7 @@ window.parseExcelToDailySchedule = function(rows) {
                             
                             <!-- ẢNH KHÔNG GIAN HỌC TẬP -->
                             <div class="relative w-full aspect-square rounded-[2rem] overflow-hidden shadow-lg z-10 group">
-                               <img src="${state.theme.loginBannerUrl || 'https://images.unsplash.com/photo-1577896851231-70ef18881754?q=80&w=1000'}" class="object-cover w-full h-full group-hover:scale-105 transition-transform duration-700">
+                               <img src="${escapeHtmlAttr(state.theme.loginBannerUrl || './logo-dang-nhap.jfif')}" alt="Ảnh đăng nhập lớp học" class="object-cover w-full h-full group-hover:scale-105 transition-transform duration-700">
                                 <div class="absolute top-4 left-4 bg-white/90 p-2 rounded-xl text-pink-500 shadow-sm"><i class="ph-fill ph-heart text-xl"></i></div>
                                 
                                 <!-- NÚT TẢI ẢNH (Máy ảnh) -->
@@ -8122,6 +8138,7 @@ window.parseExcelToDailySchedule = function(rows) {
                 state.gradeRows = [];
                 renderLayout();
                 window.startTimetableReminderSync();
+                window.startClassReminderSync();
                 let gradeLoadError = '';
                 try {
                     await window.loadGrades();
@@ -8320,6 +8337,10 @@ window.parseExcelToDailySchedule = function(rows) {
         };
 
         window.logout = function() {
+            clearInterval(window.classReminderSyncInterval);
+            clearInterval(window.timetableReminderSyncInterval);
+            window.classReminderSyncInterval = null;
+            window.timetableReminderSyncInterval = null;
             window.cloudReady.then(client => client.auth.signOut()).catch(error => {
                 console.error('Không thể kết thúc phiên đăng nhập:', error);
                 showToast('Không thể kết thúc phiên an toàn. Hãy tải lại trang.', 'error');
@@ -8403,6 +8424,7 @@ window.parseExcelToDailySchedule = function(rows) {
             state.currentTab = 'tong-quan';
             renderLayout();
             window.startTimetableReminderSync();
+            window.startClassReminderSync();
             await window.loadGrades();
         }).catch(error => {
             console.error('Không thể khôi phục phiên online:', error);
@@ -8516,7 +8538,7 @@ window.openAuditLogModal = function() {
 // --- HÀM CHUYỂN TAB ĐÃ ĐƯỢC BỔ SUNG PHÂN QUYỀN ---
 window.switchTab = function(tabId) { 
     if (state.auth && state.auth.role === 'hocsinh') {
-        const allowed = ['tong-quan', 'diem-so', 'hoc-sinh', 'thoi-khoa-bieu', 'so-do-lop', 'diem-danh'];
+        const allowed = ['tong-quan', 'diem-so', 'hoc-sinh', 'thoi-khoa-bieu', 'so-do-lop', 'diem-danh', 'bao-cao'];
         if (!allowed.includes(tabId)) {
             showToast('Tài khoản học sinh không được truy cập chức năng này.', 'error');
             return;
