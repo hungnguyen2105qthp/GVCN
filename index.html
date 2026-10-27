@@ -176,6 +176,7 @@
                 actionType: 'add', // 'add' or 'subtract'
                 targetType: 'student', // 'student', 'group', or 'class'
                 selectedTargetId: '', // student id or group name, empty if class
+                selectedTargetIds: [],
                 pointsVal: 0,
                 category: 'Học tập',
                 reason: '',
@@ -1737,6 +1738,7 @@ function renderHorizontalNav() {
                     ${!isBGH && !isBCS ? `
                     <button onclick="openEditStudentModal(null)" class="flex-1 sm:flex-none px-5 py-3 bg-[#0f172a] text-white font-bold rounded-xl text-sm shadow-md hover:bg-black transition-colors flex items-center justify-center gap-2"><i class="ph-bold ph-user-plus text-lg"></i> Thêm HS</button>
                     <button onclick="downloadTemplate()" class="flex-1 sm:flex-none px-5 py-3 bg-white text-slate-600 border border-slate-200 font-bold rounded-xl text-sm shadow-sm hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"><i class="ph-fill ph-download-simple text-green-600 text-lg"></i> File mẫu</button>
+                    <button onclick="exportStudentProfiles()" class="flex-1 sm:flex-none px-5 py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold rounded-xl text-sm shadow-sm hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2"><i class="ph-bold ph-file-xls text-lg"></i> Tải hồ sơ</button>
                     <button onclick="openImportModal()" class="flex-1 sm:flex-none px-5 py-3 bg-blue-50 text-blue-700 border border-blue-100 font-bold rounded-xl text-sm shadow-sm hover:bg-blue-100 transition-colors flex items-center justify-center gap-2"><i class="ph-bold ph-upload-simple text-lg"></i> Nhập DS</button>
                     ` : ''}
                 </div>
@@ -1912,17 +1914,30 @@ function renderStudentSelfStatistics() {
             // --- Dropdown Target Selection ---
             let targetSelectHtml = '';
             if (pf.targetType === 'student') {
+                const selectedStudentIds = Array.isArray(pf.selectedTargetIds) && pf.selectedTargetIds.length
+                    ? pf.selectedTargetIds.map(String)
+                    : pf.selectedTargetId ? [String(pf.selectedTargetId)] : [];
+                const students = [...state.students].sort((a, b) => getStudentDisplayName(a).localeCompare(getStudentDisplayName(b), 'vi'));
                 targetSelectHtml = `
-                    <div class="mb-6 animate-fade-in">
-                        <label class="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-wide">Chọn Học Sinh:</label>
-                        <div class="relative">
-                            <select onchange="updatePointsForm('selectedTargetId', this.value)" class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all appearance-none cursor-pointer shadow-sm">
-                                <option value="">-- Chọn học sinh --</option>
-                                ${[...state.students].sort((a,b) => a.name.localeCompare(b.name)).map(s => 
-                                                                       `<option value="${s.id}" ${pf.selectedTargetId == s.id ? 'selected' : ''}>${getStudentDisplayName(s)} (${s.group} | ${s.points}đ)</option>`
-                                ).join('')}
-                            </select>
-                            <i class="ph-bold ph-caret-down absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none text-xl"></i>
+                    <div class="mb-2 animate-fade-in">
+                        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <label for="points-student-search" class="block text-xs font-bold uppercase tracking-wide text-slate-600">Chọn một hoặc nhiều học sinh:</label>
+                            <span id="points-selected-count" class="rounded-full bg-purple-50 px-3 py-1 text-[11px] font-black text-purple-700">${selectedStudentIds.length} học sinh đã chọn</span>
+                        </div>
+                        <input id="points-student-search" type="search" oninput="filterPointsStudentList(this.value)" placeholder="Tìm theo tên hoặc tổ..." class="mb-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-purple-400 focus:ring-4 focus:ring-purple-100">
+                        <div class="mb-2 flex justify-end">
+                            <button type="button" onclick="toggleVisiblePointsStudents()" class="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100">Chọn / bỏ chọn danh sách đang lọc</button>
+                        </div>
+                        <div id="points-student-list" class="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                            ${students.map(student => {
+                                const id = String(student.id);
+                                const searchable = `${getStudentDisplayName(student)} ${student.group || ''}`.toLocaleLowerCase('vi');
+                                return `<label data-points-student="${escapeHtmlAttr(id)}" data-search="${escapeHtmlAttr(searchable)}" class="flex cursor-pointer items-center gap-3 rounded-lg border border-transparent bg-white px-3 py-2.5 hover:border-purple-200 hover:bg-purple-50">
+                                    <input type="checkbox" value="${escapeHtmlAttr(id)}" ${selectedStudentIds.includes(id) ? 'checked' : ''} onchange="togglePointsStudent(this.value, this.checked)" class="h-4 w-4 accent-purple-600">
+                                    <span class="min-w-0 flex-1 truncate text-sm font-bold text-slate-700">${escapeHtmlText(getStudentDisplayName(student))}</span>
+                                    <span class="shrink-0 text-[11px] font-semibold text-slate-400">${escapeHtmlText(student.group || 'Chưa phân tổ')} · ${Number(student.points) || 0}đ</span>
+                                </label>`;
+                            }).join('') || '<p class="p-4 text-center text-sm font-semibold text-slate-400">Chưa có học sinh trong danh sách.</p>'}
                         </div>
                     </div>
                 `;
@@ -2102,7 +2117,44 @@ function renderStudentSelfStatistics() {
                 state.pointsForm.pointsVal = 0;
                 state.pointsForm.reason = '';
             }
+            if (key === 'targetType') {
+                state.pointsForm.selectedTargetId = '';
+                state.pointsForm.selectedTargetIds = [];
+            }
             renderLayout();
+        };
+
+        window.togglePointsStudent = function(studentId, selected) {
+            const selectedIds = new Set((state.pointsForm.selectedTargetIds || []).map(String));
+            const id = String(studentId);
+            if (selected) selectedIds.add(id);
+            else selectedIds.delete(id);
+            state.pointsForm.selectedTargetIds = [...selectedIds];
+            state.pointsForm.selectedTargetId = state.pointsForm.selectedTargetIds[0] || '';
+            const count = document.getElementById('points-selected-count');
+            if (count) count.textContent = `${state.pointsForm.selectedTargetIds.length} học sinh đã chọn`;
+            validatePointsForm();
+        };
+
+        window.filterPointsStudentList = function(query) {
+            const normalized = String(query || '').trim().toLocaleLowerCase('vi');
+            document.querySelectorAll('#points-student-list [data-points-student]').forEach(label => {
+                label.classList.toggle('hidden', normalized !== '' && !label.dataset.search.includes(normalized));
+            });
+        };
+
+        window.toggleVisiblePointsStudents = function() {
+            const visible = [...document.querySelectorAll('#points-student-list [data-points-student]')]
+                .filter(label => !label.classList.contains('hidden'));
+            if (!visible.length) return;
+            const shouldSelect = visible.some(label => !label.querySelector('input').checked);
+            visible.forEach(label => {
+                const checkbox = label.querySelector('input');
+                if (checkbox.checked !== shouldSelect) {
+                    checkbox.checked = shouldSelect;
+                    window.togglePointsStudent(checkbox.value, shouldSelect);
+                }
+            });
         };
 
         // --- Validate input dynamically to prevent full re-render on typing ---
@@ -2112,7 +2164,7 @@ function renderStudentSelfStatistics() {
             
             if (pf.pointsVal > 0 && pf.reason.trim() !== '') {
                 if (pf.targetType === 'class') canSubmit = true;
-                else if (pf.selectedTargetId) canSubmit = true;
+                else if ((Array.isArray(pf.selectedTargetIds) && pf.selectedTargetIds.length) || pf.selectedTargetId) canSubmit = true;
             }
 
             const btn = document.getElementById('points-submit-btn');
@@ -2143,7 +2195,7 @@ function renderStudentSelfStatistics() {
 
         window.resetPointsForm = function() {
             state.pointsForm = {
-                actionType: 'add', targetType: 'student', selectedTargetId: '', pointsVal: 0, category: 'Học tập', reason: '', note: ''
+                actionType: 'add', targetType: 'student', selectedTargetId: '', selectedTargetIds: [], pointsVal: 0, category: 'Học tập', reason: '', note: ''
             };
             renderLayout();
         };
@@ -2193,10 +2245,15 @@ window.executePointsSubmission = function() {
     let successMsg = "";
     
     if (pf.targetType === 'student') {
-        const s = state.students.find(x => x.id.toString() === pf.selectedTargetId.toString());
-        if (!s) return showToast("Vui lòng chọn học sinh!", "error");
-        targetStudents.push(s);
-        successMsg = `Đã ${pf.actionType === 'add' ? 'cộng' : 'trừ'} ${Math.abs(pointsToApply)} điểm cho ${s.name}`;
+        const selectedIds = Array.isArray(pf.selectedTargetIds) && pf.selectedTargetIds.length
+            ? new Set(pf.selectedTargetIds.map(String))
+            : new Set(pf.selectedTargetId ? [String(pf.selectedTargetId)] : []);
+        targetStudents = state.students.filter(student => selectedIds.has(String(student.id)));
+        if (!targetStudents.length) return showToast("Vui lòng chọn ít nhất một học sinh!", "error");
+        const action = pf.actionType === 'add' ? 'cộng' : 'trừ';
+        successMsg = targetStudents.length === 1
+            ? `Đã ${action} ${Math.abs(pointsToApply)} điểm cho ${targetStudents[0].name}`
+            : `Đã ${action} ${Math.abs(pointsToApply)} điểm cho ${targetStudents.length} học sinh`;
     } 
     else if (pf.targetType === 'group') {
         targetStudents = state.students.filter(x => x.group === pf.selectedTargetId);
@@ -2232,6 +2289,8 @@ window.executePointsSubmission = function() {
     state.pointsForm.pointsVal = 0;
     state.pointsForm.reason = '';
     state.pointsForm.note = '';
+    state.pointsForm.selectedTargetId = '';
+    state.pointsForm.selectedTargetIds = [];
     
     renderLayout();
     showToast(successMsg, pointsToApply > 0 ? "success" : "error");
@@ -4374,7 +4433,7 @@ function renderViewCaiDat() {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa hồ sơ học sinh.', 'error');
             state.editingStudentId = id;
             // Khởi tạo thêm các trường mới: ethnicity, isUnionMember, prevAcademic, prevConduct
-            const s = id ? state.students.find(x => x.id === id) : { name: '', role: 'Thành viên lớp', goal: '', talent: '', group: 'Tổ 1', avatarUrl: '', gender: 'Nữ', dob: '', boardingType: 'Ngoại trú', ethnicity: 'Kinh', isUnionMember: 'Chưa', prevAcademic: '', prevConduct: '' };
+            const s = id ? state.students.find(x => x.id === id) : { name: '', role: 'Thành viên lớp', goal: '', talent: '', group: 'Tổ 1', avatarUrl: '', gender: 'Nữ', dob: '', address: '', phone: '', citizenId: '', boardingType: 'Ngoại trú', ethnicity: 'Kinh', isUnionMember: 'Chưa', prevAcademic: '', prevConduct: '', prevTitle: '' };
             if (!s && id) return;
             
             const roleOptions = ['Thành viên lớp', 'Lớp trưởng', 'Lớp phó học tập', 'Lớp phó phong trào', 'Bí thư', 'Tổ trưởng'].map(role =>
@@ -4402,139 +4461,121 @@ function renderViewCaiDat() {
                         </div>
                         
                         <!-- Body -->
-                        <div class="p-6 md:p-8 flex-1 overflow-y-auto custom-scrollbar flex flex-col md:flex-row gap-10 bg-white">
-                            
-                            <!-- Left Column -->
-                            <div class="flex-1 space-y-5">
-                                <div class="text-[12px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-2">THÔNG TIN CƠ BẢN</div>
-                                
-                                <!-- Ảnh đại diện -->
-                                <div class="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                                    <div class="relative cursor-pointer group flex-shrink-0" onclick="document.getElementById('edit-student-avatar-upload').click()">
-                                        ${getAvatarImg(s.avatarUrl, s.name || 'A', "w-16 h-16 transition-opacity group-hover:opacity-80 ring-2 ring-white shadow-sm")}
-                                        <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <div class="bg-black/60 rounded-full p-2 text-white"><i class="ph-bold ph-camera text-sm"></i></div>
-                                        </div>
-                                        <input type="file" id="edit-student-avatar-upload" class="hidden" accept="image/*" onchange="handleStudentAvatarUpload(event)">
-                                    </div>
-                                    <div class="flex-1 min-w-0">
-                                        <label class="block text-sm font-bold text-slate-600 mb-1">Ảnh đại diện</label>
-                                        <input type="text" id="edit-s-avatar" value="${escapeHtmlAttr(s.avatarUrl || '')}" placeholder="Dán link hoặc tải lên..." class="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:border-blueAccent focus:outline-none font-medium truncate shadow-sm" oninput="document.querySelector('#edit-student-modal img').src=this.value || 'https://placehold.co/100x100/e2e8f0/64748b?text=AVT'">
-                                    </div>
-                                </div>
-                                
-                                <!-- Họ và tên -->
+                        <div class="p-6 md:p-8 flex-1 overflow-y-auto custom-scrollbar space-y-5 bg-white">
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Họ Tên <span class="text-red-500">(Bắt buộc)</span></label>
+                                <input type="text" id="edit-s-name" required value="${escapeHtmlAttr(s.name || '')}" class="w-full rounded-xl border border-slate-300 px-5 py-3 text-base font-black text-slate-800 shadow-sm outline-none focus:border-blueAccent focus:ring-2 focus:ring-blue-100">
+                            </div>
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div>
-                                    <label class="block text-sm font-bold text-slate-600 mb-1.5">Họ và tên <span class="text-red-500">*</span></label>
-                                    <input type="text" id="edit-s-name" value="${escapeHtmlAttr(s.name)}" class="w-full px-5 py-3 bg-white border border-slate-300 rounded-xl text-base font-black text-slate-800 focus:border-blueAccent focus:ring-2 focus:ring-blue-100 outline-none transition-all shadow-sm">
+                                    <label class="mb-1.5 block text-sm font-bold text-slate-600">Giới tính</label>
+                                    <select id="edit-s-gender" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                                        <option value="Nam" ${s.gender==='Nam'?'selected':''}>Nam</option><option value="Nữ" ${s.gender==='Nữ'?'selected':''}>Nữ</option>
+                                    </select>
                                 </div>
-                                
-                                <!-- Giới tính & Nhóm -->
-                                <div class="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-1.5">Giới tính</label>
-                                        <select id="edit-s-gender" class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-blueAccent cursor-pointer outline-none shadow-sm">
-                                            <option value="Nam" ${s.gender==='Nam'?'selected':''}>Nam</option><option value="Nữ" ${s.gender==='Nữ'?'selected':''}>Nữ</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-1.5">Nhóm thi đua</label>
-                                        <select id="edit-s-group" class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-blueAccent cursor-pointer outline-none shadow-sm">
-                                            ${groupOptions}
-                                        </select>
-                                    </div>
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-bold text-slate-600">Tổ thi đua</label>
+                                    <select id="edit-s-group" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">${groupOptions}</select>
                                 </div>
-                                
-                                <!-- Ngày sinh & Lưu trú -->
-                                <div class="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Ngày sinh</label>
-                                        <input type="date" id="edit-s-dob" value="${escapeHtmlAttr(s.dob || '')}" class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-blueAccent outline-none shadow-sm cursor-pointer">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Vai trò</label>
+                                <input type="text" id="edit-s-role" value="${escapeHtmlAttr(s.role || '')}" placeholder="Lớp phó học tập..." class="mb-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold outline-none focus:border-blueAccent">
+                                <div class="flex flex-wrap gap-2">${roleOptions}</div>
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Mục tiêu phấn đấu</label>
+                                <input type="text" id="edit-s-goal" value="${escapeHtmlAttr(s.goal || '')}" placeholder="Học sinh xuất sắc..." class="mb-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold outline-none focus:border-blueAccent">
+                                <div class="flex flex-wrap gap-2">${goalOptions}</div>
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Năng khiếu</label>
+                                <input type="text" id="edit-s-talent" value="${escapeHtmlAttr(s.talent || '')}" placeholder="MC, Hát, Tiếng Anh..." class="mb-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold outline-none focus:border-blueAccent">
+                                <div class="flex flex-wrap gap-2">${talentOptions}</div>
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Ngày sinh</label>
+                                <input type="date" id="edit-s-dob" value="${escapeHtmlAttr(s.dob || '')}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Địa chỉ</label>
+                                <input type="text" id="edit-s-address" value="${escapeHtmlAttr(s.address || '')}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">SĐT liên hệ</label>
+                                <input type="tel" id="edit-s-phone" value="${escapeHtmlAttr(s.phone || '')}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Số CCCD</label>
+                                <input type="text" id="edit-s-citizen-id" inputmode="numeric" value="${escapeHtmlAttr(s.citizenId || '')}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Dân tộc</label>
+                                <input type="text" id="edit-s-ethnicity" value="${escapeHtmlAttr(s.ethnicity || 'Kinh')}" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Đoàn viên</label>
+                                <select id="edit-s-union" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                                    <option value="Rồi" ${s.isUnionMember==='Rồi'?'selected':''}>Rồi</option>
+                                    <option value="Chưa" ${s.isUnionMember!=='Rồi'?'selected':''}>Chưa</option>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-bold text-slate-600">Học lực năm trước</label>
+                                    <select id="edit-s-prev-academic" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                                        <option value="">- Chọn -</option>
+                                        <option value="Tốt" ${s.prevAcademic==='Tốt'?'selected':''}>Tốt</option>
+                                        <option value="Khá" ${s.prevAcademic==='Khá'?'selected':''}>Khá</option>
+                                        <option value="Đạt" ${s.prevAcademic==='Đạt'?'selected':''}>Đạt</option>
+                                        <option value="Chưa đạt" ${s.prevAcademic==='Chưa đạt'?'selected':''}>Chưa đạt</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-bold text-slate-600">Rèn luyện năm trước</label>
+                                    <select id="edit-s-prev-conduct" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                                        <option value="">- Chọn -</option>
+                                        <option value="Tốt" ${s.prevConduct==='Tốt'?'selected':''}>Tốt</option>
+                                        <option value="Khá" ${s.prevConduct==='Khá'?'selected':''}>Khá</option>
+                                        <option value="Đạt" ${s.prevConduct==='Đạt'?'selected':''}>Đạt</option>
+                                        <option value="Chưa đạt" ${s.prevConduct==='Chưa đạt'?'selected':''}>Chưa đạt</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-sm font-bold text-slate-600">Danh hiệu năm trước (nếu có)</label>
+                                <input type="text" id="edit-s-prev-title" value="${escapeHtmlAttr(s.prevTitle || '')}" placeholder="Học sinh giỏi, học sinh xuất sắc..." class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-blueAccent">
+                            </div>
+                            <details class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <summary class="cursor-pointer text-sm font-bold text-slate-600">Thông tin bổ sung</summary>
+                                <div class="mt-4 space-y-4">
+                                    <div class="flex items-center gap-4 rounded-2xl border border-slate-100 bg-white p-4">
+                                        <div class="relative h-16 w-16 shrink-0 cursor-pointer" onclick="document.getElementById('edit-student-avatar-upload').click()">
+                                            ${getAvatarImg(s.avatarUrl, s.name || 'A', "h-16 w-16 ring-2 ring-slate-100")}
+                                            <input type="file" id="edit-student-avatar-upload" class="hidden" accept="image/*" onchange="handleStudentAvatarUpload(event)">
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <label class="mb-1 block text-sm font-bold text-slate-600">Ảnh đại diện</label>
+                                            <input type="text" id="edit-s-avatar" value="${escapeHtmlAttr(s.avatarUrl || '')}" placeholder="Dán liên kết ảnh..." class="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" oninput="document.querySelector('#edit-student-modal img').src=this.value || 'https://placehold.co/100x100/e2e8f0/64748b?text=AVT'">
+                                        </div>
                                     </div>
                                     <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Lưu trú</label>
-                                        <select id="edit-s-boarding" class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-blueAccent cursor-pointer outline-none shadow-sm">
+                                        <label class="mb-1.5 block text-sm font-bold text-slate-600">Hình thức lưu trú</label>
+                                        <select id="edit-s-boarding" class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold">
                                             <option value="Ngoại trú" ${s.boardingType==='Ngoại trú'?'selected':''}>Ngoại trú</option>
                                             <option value="Bán trú" ${s.boardingType==='Bán trú'?'selected':''}>Bán trú</option>
                                             <option value="Nội trú" ${s.boardingType==='Nội trú'?'selected':''}>Nội trú</option>
                                             <option value="Hai buổi" ${s.boardingType==='Hai buổi'?'selected':''}>Hai buổi</option>
                                         </select>
                                     </div>
-                                </div>
-
-                                <!-- Dân tộc & Đoàn viên (MỚI THÊM) -->
-                                <div class="grid grid-cols-2 gap-4 bg-orange-50/50 p-3 rounded-2xl border border-orange-100">
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Dân tộc</label>
-                                        <input type="text" id="edit-s-ethnicity" value="${escapeHtmlAttr(s.ethnicity || 'Kinh')}" class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-orange-400 outline-none shadow-sm">
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Đoàn viên</label>
-                                        <select id="edit-s-union" class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-orange-400 cursor-pointer outline-none shadow-sm">
-                                            <option value="Chưa" ${s.isUnionMember==='Chưa'?'selected':''}>Chưa vào Đoàn</option>
-                                            <option value="Rồi" ${s.isUnionMember==='Rồi'?'selected':''}>Đã vào Đoàn</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                
-                                <!-- Mã tra cứu -->
-                                <div class="flex items-center gap-3 pt-2">
-                                    <div class="flex items-center gap-1.5 text-[#5468ff] font-black text-sm">
+                                    <div class="flex items-center gap-3 text-sm font-bold text-indigo-700">
                                         <i class="ph-fill ph-squares-four text-lg"></i>
-                                        <span>Mã tra cứu: <span id="display-s-code" class="tracking-wider">${s.code || '---'}</span></span>
-                                    </div>
-                                    <input type="hidden" id="edit-s-code" value="${escapeHtmlAttr(s.code || '')}">
-                                    <button type="button" onclick="const newCode = Math.floor(10000 + Math.random() * 90000).toString(); document.getElementById('edit-s-code').value = newCode; document.getElementById('display-s-code').innerText = newCode; showToast('Đã đổi mã mới!');" class="text-[11px] font-bold text-slate-400 hover:text-[#5468ff] underline cursor-pointer transition-colors">Đổi ngẫu nhiên</button>
-                                </div>
-                            </div>
-                            
-                            <!-- Right Column -->
-                            <div class="flex-1 space-y-5">
-                                <div class="text-[12px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-100 pb-2">PHÁT TRIỂN & KẾT QUẢ</div>
-                                
-                                <div>
-                                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Vai trò trong lớp</label>
-                                    <input type="text" id="edit-s-role" value="${escapeHtmlAttr(s.role || '')}" placeholder="Lớp phó học tập..." class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold focus:border-blueAccent outline-none mb-2 shadow-sm">
-                                    <div class="flex flex-wrap gap-2">${roleOptions}</div>
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 mt-4">Mục tiêu phấn đấu</label>
-                                    <input type="text" id="edit-s-goal" value="${escapeHtmlAttr(s.goal || '')}" placeholder="Học sinh xuất sắc..." class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold focus:border-blueAccent outline-none mb-2 shadow-sm">
-                                    <div class="flex flex-wrap gap-2">${goalOptions}</div>
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 mt-4">Năng khiếu</label>
-                                    <input type="text" id="edit-s-talent" value="${escapeHtmlAttr(s.talent || '')}" placeholder="MC, Hát, Tiếng Anh..." class="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold focus:border-blueAccent outline-none mb-2 shadow-sm">
-                                    <div class="flex flex-wrap gap-2">${talentOptions}</div>
-                                </div>
-
-                                <!-- Kết quả năm trước (MỚI THÊM) -->
-                                <div class="grid grid-cols-2 gap-4 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 mt-4">
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2">Học lực (Năm trước)</label>
-                                        <select id="edit-s-prev-academic" class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-emerald-500 outline-none shadow-sm cursor-pointer">
-                                            <option value="">- Chọn -</option>
-                                            <option value="Tốt" ${s.prevAcademic==='Tốt'?'selected':''}>Tốt (Giỏi)</option>
-                                            <option value="Khá" ${s.prevAcademic==='Khá'?'selected':''}>Khá</option>
-                                            <option value="Đạt" ${s.prevAcademic==='Đạt'?'selected':''}>Đạt (TB)</option>
-                                            <option value="Chưa đạt" ${s.prevAcademic==='Chưa đạt'?'selected':''}>Chưa đạt (Yếu)</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2">Rèn luyện (Năm trước)</label>
-                                        <select id="edit-s-prev-conduct" class="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-700 focus:border-emerald-500 outline-none shadow-sm cursor-pointer">
-                                            <option value="">- Chọn -</option>
-                                            <option value="Tốt" ${s.prevConduct==='Tốt'?'selected':''}>Tốt</option>
-                                            <option value="Khá" ${s.prevConduct==='Khá'?'selected':''}>Khá</option>
-                                            <option value="Đạt" ${s.prevConduct==='Đạt'?'selected':''}>Đạt</option>
-                                            <option value="Chưa đạt" ${s.prevConduct==='Chưa đạt'?'selected':''}>Chưa đạt</option>
-                                        </select>
+                                        <span>Mã tra cứu: <span id="display-s-code" class="tracking-wider">${escapeHtmlText(s.code || '---')}</span></span>
+                                        <input type="hidden" id="edit-s-code" value="${escapeHtmlAttr(s.code || '')}">
+                                        <button type="button" onclick="const newCode = Math.floor(10000 + Math.random() * 90000).toString(); document.getElementById('edit-s-code').value = newCode; document.getElementById('display-s-code').innerText = newCode; showToast('Đã đổi mã mới!');" class="text-[11px] text-slate-400 underline">Đổi ngẫu nhiên</button>
                                     </div>
                                 </div>
-
-                            </div>
+                            </details>
                         </div>
                         
                         <!-- Footer -->
@@ -4565,6 +4606,9 @@ window.saveStudentEdit = function() {
         gender: document.getElementById('edit-s-gender').value,
         group: document.getElementById('edit-s-group').value,
         dob: document.getElementById('edit-s-dob').value,
+        address: document.getElementById('edit-s-address').value.trim(),
+        phone: document.getElementById('edit-s-phone').value.trim(),
+        citizenId: document.getElementById('edit-s-citizen-id').value.trim(),
         boardingType: document.getElementById('edit-s-boarding').value,
         code: document.getElementById('edit-s-code').value,
         role: document.getElementById('edit-s-role').value.trim() || 'Thành viên lớp',
@@ -4573,7 +4617,8 @@ window.saveStudentEdit = function() {
         ethnicity: document.getElementById('edit-s-ethnicity').value.trim() || 'Kinh',
         isUnionMember: document.getElementById('edit-s-union').value,
         prevAcademic: document.getElementById('edit-s-prev-academic').value,
-        prevConduct: document.getElementById('edit-s-prev-conduct').value
+        prevConduct: document.getElementById('edit-s-prev-conduct').value,
+        prevTitle: document.getElementById('edit-s-prev-title').value.trim()
     };
     
     // 3. Xử lý lưu hồ sơ học sinh
@@ -4700,23 +4745,72 @@ window.openEditGroupModal = function(id) {
             closeModal('edit-group-modal');
         }
 
+       const studentProfileHeaders = [
+            "Họ Tên (Bắt buộc)",
+            "Giới tính",
+            "Tổ thi đua",
+            "Vai trò",
+            "Mục tiêu phấn đấu",
+            "Năng khiếu",
+            "Ngày sinh",
+            "Địa chỉ",
+            "SĐT liên hệ",
+            "Số CCCD",
+            "Dân tộc",
+            "Đoàn viên (Rồi/Chưa)",
+            "Học lực năm trước",
+            "Rèn luyện năm trước",
+            "Danh hiệu năm trước (nếu có)"
+        ];
+
        window.downloadTemplate = function() {
-            const headers = [["Họ Tên (Bắt buộc)", "Giới tính", "Tổ thi đua", "Vai trò", "Mục tiêu phấn đấu", "Năng khiếu", "Ngày sinh (Năm-Tháng-Ngày)", "Hình thức lưu trú", "Dân tộc", "Đoàn viên (Rồi/Chưa)", "Học lực năm trước", "Rèn luyện năm trước"]];
+            const headers = [studentProfileHeaders];
             const sampleData = [
-                ["Nguyễn Văn A", "Nam", "Tổ 1", "Lớp trưởng", "Học sinh giỏi", "Toán", "2008-05-15", "Ngoại trú", "Kinh", "Rồi", "Tốt", "Tốt"],
-                ["Trần Thị B", "Nữ", "Tổ 2", "Thành viên", "Tiến bộ", "Văn nghệ", "2008-08-20", "Bán trú", "Kinh", "Chưa", "Khá", "Tốt"]
+                ["Nguyễn Văn A", "Nam", "Tổ 1", "Lớp trưởng", "Học sinh giỏi", "Toán", "2008-05-15", "Hà Nội", "0900000001", "", "Kinh", "Rồi", "Tốt", "Tốt", "Học sinh giỏi"],
+                ["Trần Thị B", "Nữ", "Tổ 2", "Thành viên", "Tiến bộ", "Văn nghệ", "2008-08-20", "Hà Nội", "0900000002", "", "Kinh", "Chưa", "Khá", "Tốt", ""]
             ];
             
-            // Khởi tạo bảng tính và điền dữ liệu
             const ws = XLSX.utils.aoa_to_sheet([...headers, ...sampleData]);
-            
-            // Căn chỉnh độ rộng các cột cho đẹp mắt
-            ws['!cols'] = [{wch: 25}, {wch: 10}, {wch: 15}, {wch: 15}, {wch: 20}, {wch: 15}, {wch: 25}, {wch: 20}, {wch: 15}, {wch: 20}, {wch: 20}, {wch: 20}];
-            
+            ws['!cols'] = [30, 12, 16, 20, 24, 20, 16, 30, 18, 18, 16, 20, 22, 22, 28].map(wch => ({ wch }));
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Mau_Nhap_Hoc_Sinh");
             XLSX.writeFile(wb, "File_Mau_Nhap_Hoc_Sinh.xlsx");
-            showToast("Đã tải xuống file Excel mẫu có cập nhật trường mới!", "success");
+            showToast("Đã tải file mẫu theo đúng thứ tự thông tin hồ sơ.", "success");
+        };
+
+        window.exportStudentProfiles = function() {
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast("Chỉ GVCN được tải danh sách hồ sơ.", "error");
+            if (!window.XLSX) return showToast("Thư viện Excel chưa tải xong. Vui lòng tải lại trang và thử lại.", "error");
+            try {
+                const rows = [...state.students]
+                    .sort((left, right) => getStudentDisplayName(left).localeCompare(getStudentDisplayName(right), 'vi'))
+                    .map(student => [
+                        student.name || "",
+                        student.gender || "",
+                        student.group || "",
+                        student.role || "",
+                        student.goal || "",
+                        student.talent || "",
+                        student.dob || "",
+                        student.address || "",
+                        student.phone || "",
+                        student.citizenId || "",
+                        student.ethnicity || "",
+                        student.isUnionMember || "",
+                        student.prevAcademic || "",
+                        student.prevConduct || "",
+                        student.prevTitle || ""
+                    ]);
+                const worksheet = XLSX.utils.aoa_to_sheet([studentProfileHeaders, ...rows]);
+                worksheet['!cols'] = [30, 12, 16, 20, 24, 20, 16, 30, 18, 18, 16, 20, 22, 22, 28].map(wch => ({ wch }));
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Ho_So_Hoc_Sinh");
+                XLSX.writeFile(workbook, "Danh_Sach_Ho_So_Hoc_Sinh.xlsx");
+                showToast(`Đã tải hồ sơ ${rows.length} học sinh.`, "success");
+            } catch (error) {
+                console.error("Không thể xuất hồ sơ học sinh:", error);
+                showToast(error.message || "Không thể xuất hồ sơ học sinh.", "error");
+            }
         };
 
         function openImportModal() {
@@ -4733,7 +4827,7 @@ window.openEditGroupModal = function(id) {
                                 <input type="file" id="excel-upload-input" class="hidden" accept=".xlsx, .xls, .csv" onchange="handleExcelUpload(event)">
                                 <div class="p-4 bg-white rounded-full shadow-sm mb-4 group-hover:scale-110 transition-transform"><i class="ph-fill ph-upload-simple text-3xl text-blueAccent"></i></div>
                                 <div class="font-bold text-slate-700 text-base mb-1">Bấm để chọn file Excel (.xlsx)</div>
-                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Cột A: Họ Tên | B: Giới tính | C: Tổ | D: Vai trò<br>E: Mục tiêu | F: Năng khiếu | G: Ngày sinh | H: Lưu trú<br><span class="text-orange-600">I: Dân tộc | J: Đoàn viên | K: Học lực năm trước | L: Rèn luyện năm trước</span></div>
+                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Cột A–G: Họ tên, Giới tính, Tổ thi đua, Vai trò, Mục tiêu, Năng khiếu, Ngày sinh<br>H–K: Địa chỉ, SĐT liên hệ, CCCD, Dân tộc<br><span class="text-orange-600">L–O: Đoàn viên, Học lực năm trước, Rèn luyện năm trước, Danh hiệu năm trước</span></div>
                             </div>
                             
                             <div class="relative py-2"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div><div class="relative flex justify-center"><span class="bg-white px-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest">Hoặc dán văn bản</span></div></div>
@@ -4768,8 +4862,11 @@ window.openEditGroupModal = function(id) {
       function processImportRows(rows) {
             const importedStudents = [];
             let currentId = state.students.length > 0 ? Math.max(...state.students.map(s => s.id)) + 1 : 1;
+            const header = (rows[0] || []).map(value => String(value || '').trim().toLocaleLowerCase('vi'));
+            const hasHeader = header.some(value => value.includes('họ tên') || value.includes('ho ten') || value.includes('họ và tên'));
+            const legacyFormat = hasHeader && header.some(value => value.includes('lưu trú') || value.includes('luu tru'));
             rows.forEach((row, i) => {
-                if (i === 0 && row[0] && row[0].toString().toLowerCase().includes('tên')) return;
+                if (i === 0 && hasHeader) return;
                 const name = (row[0] || '').toString().trim(); if (!name) return;
                 importedStudents.push({
                     id: currentId++, name: name, 
@@ -4779,11 +4876,15 @@ window.openEditGroupModal = function(id) {
                     goal: (row[4] || '').toString().trim() || '', 
                     talent: (row[5] || '').toString().trim() || '', 
                     dob: (row[6] || '').toString().trim() || '',
-                    boardingType: (row[7] || '').toString().trim() || 'Ngoại trú',
-                    ethnicity: (row[8] || '').toString().trim() || 'Kinh',
-                    isUnionMember: (row[9] || '').toString().trim() || 'Chưa',
-                    prevAcademic: (row[10] || '').toString().trim() || '',
-                    prevConduct: (row[11] || '').toString().trim() || '',
+                    address: legacyFormat ? '' : (row[7] || '').toString().trim(),
+                    phone: legacyFormat ? '' : (row[8] || '').toString().trim(),
+                    citizenId: legacyFormat ? '' : (row[9] || '').toString().trim(),
+                    boardingType: legacyFormat ? (row[7] || '').toString().trim() || 'Ngoại trú' : 'Ngoại trú',
+                    ethnicity: (row[legacyFormat ? 8 : 10] || '').toString().trim() || 'Kinh',
+                    isUnionMember: (row[legacyFormat ? 9 : 11] || '').toString().trim() || 'Chưa',
+                    prevAcademic: (row[legacyFormat ? 10 : 12] || '').toString().trim() || '',
+                    prevConduct: (row[legacyFormat ? 11 : 13] || '').toString().trim() || '',
+                    prevTitle: legacyFormat ? '' : (row[14] || '').toString().trim(),
                     avatarUrl: '', points: 0, stars: 0, code: generateUniqueCode(), history: [] 
                 });
             });
