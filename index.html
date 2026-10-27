@@ -8165,7 +8165,7 @@ window.parseExcelToDailySchedule = function(rows) {
                     window.notifyNewClassReminders();
                 } catch (reminderError) {
                     console.error('Không thể tải lời nhắc:', reminderError);
-                    showToast('Lời nhắc chưa sẵn sàng. Hãy cập nhật schema Supabase theo hướng dẫn.', 'error');
+                    showToast(reminderError.message || 'Lời nhắc chưa sẵn sàng. Hãy kiểm tra quyền truy cập database.', 'error');
                 }
                 state.currentTab = 'tong-quan';
                 state.gradeRows = [];
@@ -8461,7 +8461,7 @@ window.parseExcelToDailySchedule = function(rows) {
                 window.notifyNewClassReminders();
             } catch (reminderError) {
                 console.error('Không thể tải lời nhắc:', reminderError);
-                showToast('Lời nhắc chưa sẵn sàng. Hãy cập nhật schema Supabase theo hướng dẫn.', 'error');
+                showToast(reminderError.message || 'Lời nhắc chưa sẵn sàng. Hãy kiểm tra quyền truy cập database.', 'error');
             }
             state.currentTab = 'tong-quan';
             renderLayout();

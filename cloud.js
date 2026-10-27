@@ -10,8 +10,16 @@
   async function loadClient() {
     const configResponse = await fetch("/api/config", { cache: "no-store" });
     const config = await configResponse.json().catch(() => null);
-    if (!configResponse.ok) throw new Error(config && config.error || "Không tải được cấu hình database.");
-    if (!config) throw new Error("Không nhận được cấu hình database. Hãy chạy ứng dụng qua Vercel.");
+    if (!configResponse.ok) {
+      if (config && config.error) throw new Error(config.error);
+      if (configResponse.status === 404 || configResponse.status === 405) {
+        throw new Error("Không tìm thấy API cấu hình Supabase. Hãy triển khai ứng dụng trên Vercel; GitHub Pages không chạy được API /api/config.");
+      }
+      throw new Error(`Không tải được cấu hình database (HTTP ${configResponse.status}).`);
+    }
+    if (!config || !config.url || !config.anonKey) {
+      throw new Error("Không nhận được cấu hình Supabase hợp lệ. Hãy triển khai ứng dụng trên Vercel và cấu hình các biến môi trường Supabase.");
+    }
 
     await new Promise((resolve, reject) => {
       const script = document.createElement("script");
@@ -59,14 +67,21 @@
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     });
-    const result = await response.json();
+    const result = await response.json().catch(() => null);
     if (!response.ok) {
       const fallbackMessage = method === "PUT"
         ? "Không thể sửa lời nhắc."
         : method === "DELETE"
           ? "Không thể xóa lời nhắc."
           : "Không thể gửi lời nhắc.";
-      throw new Error(result.error || fallbackMessage);
+      if (result && result.error) throw new Error(result.error);
+      if (response.status === 404 || response.status === 405) {
+        throw new Error("Không tìm thấy API lời nhắc. Hãy triển khai ứng dụng trên Vercel; GitHub Pages không chạy được API /api/reminders.");
+      }
+      throw new Error(`${fallbackMessage} (HTTP ${response.status}).`);
+    }
+    if (!result || typeof result !== "object") {
+      throw new Error("API lời nhắc trả về dữ liệu không hợp lệ. Hãy kiểm tra cấu hình triển khai Vercel.");
     }
     return result;
   };
