@@ -26,6 +26,7 @@
     }
     window.cloudClient = window.supabase.createClient(config.url, config.anonKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      global: { headers: { "Cache-Control": "no-cache, no-store" } },
     });
     return window.cloudClient;
   }

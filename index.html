@@ -482,7 +482,11 @@
 
         window.loadClassReminders = async function() {
             const client = await window.cloudReady;
-            const { data, error } = await client.from('class_reminders').select('*').order('created_at', { ascending: false }).limit(50);
+            const { data, error } = await client.from('class_reminders')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .order('id', { ascending: false })
+                .limit(50);
             if (error) throw error;
             state.classReminders = data || [];
         };
@@ -580,12 +584,10 @@
             }
         }
 
-        function getUpcomingTimetableReminders() {
-            const today = new Date();
-            const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        function getVisibleTimetableReminders() {
             return getTimetableReminderEntries()
-                .filter(reminder => reminder.date >= todayString && String(reminder.message || '').trim())
-                .sort((left, right) => `${left.date} ${left.time || ''}`.localeCompare(`${right.date} ${right.time || ''}`));
+                .filter(reminder => String(reminder.message || '').trim())
+                .sort((left, right) => `${right.date} ${right.time || ''}`.localeCompare(`${left.date} ${left.time || ''}`));
         }
 
         function getSeenTimetableReminderIds() {
@@ -605,13 +607,13 @@
         }
 
         function getUnreadTimetableReminderCount() {
-            return getUpcomingTimetableReminders().filter(isTimetableReminderUnread).length;
+            return getVisibleTimetableReminders().filter(isTimetableReminderUnread).length;
         }
 
         window.markTimetableReminderRead = function(reminderId) {
             const userId = String(state.auth && state.auth.userId || '');
             if (!userId) return;
-            if (!getUpcomingTimetableReminders().some(reminder => String(reminder.id) === String(reminderId))) return;
+            if (!getVisibleTimetableReminders().some(reminder => String(reminder.id) === String(reminderId))) return;
             try {
                 const key = `timetableReminderSeen:${userId}`;
                 const existing = JSON.parse(localStorage.getItem(key) || '[]');
@@ -646,7 +648,7 @@
                 const timetableKey = `timetableReminderSeen:${userId}`;
                 const existingTimetableIds = JSON.parse(localStorage.getItem(timetableKey) || '[]');
                 const timetableIds = new Set(Array.isArray(existingTimetableIds) ? existingTimetableIds.map(String) : []);
-                getUpcomingTimetableReminders().forEach(reminder => timetableIds.add(String(reminder.id)));
+                getVisibleTimetableReminders().forEach(reminder => timetableIds.add(String(reminder.id)));
                 localStorage.setItem(timetableKey, JSON.stringify([...timetableIds].slice(-200)));
             } catch (error) {
                 console.error('Không thể đánh dấu tất cả thông báo đã đọc:', error);
@@ -685,16 +687,19 @@
         function notifyNewTimetableReminders() {
             const userId = String(state.auth && state.auth.userId || '');
             if (!userId || state.auth.role === 'gvcn') return;
-            const reminders = getUpcomingTimetableReminders();
+            const reminders = getVisibleTimetableReminders();
             const key = `timetableReminderNotified:${userId}`;
             try {
                 const stored = sessionStorage.getItem(key);
                 const knownIds = new Set(stored ? JSON.parse(stored).map(String) : []);
-                const fresh = stored === null ? [] : reminders.filter(reminder => !knownIds.has(String(reminder.id)));
+                const seenIds = getSeenTimetableReminderIds();
+                const fresh = reminders.filter(reminder =>
+                    !knownIds.has(String(reminder.id)) && !seenIds.has(String(reminder.id))
+                );
                 sessionStorage.setItem(key, JSON.stringify([...new Set([...knownIds, ...reminders.map(reminder => String(reminder.id))])].slice(-200)));
                 if (fresh.length) {
-                    const latest = fresh[fresh.length - 1];
-                    showToast(`Có ${fresh.length} lời nhắc thời khóa biểu mới: ${escapeHtmlText(latest.subject || 'môn học')} · ${escapeHtmlText(formatTimetableDate(latest.date))} ${escapeHtmlText(latest.time || '')}`, 'success');
+                    const latest = fresh[0];
+                    showToast(`Có ${fresh.length} lời nhắc thời khóa biểu mới: ${escapeHtmlText(latest.subject || 'môn học')} · ${escapeHtmlText(formatTimetableDate(latest.date))} ${escapeHtmlText(latest.time || '')} — ${escapeHtmlText(latest.message || '')}`, 'success');
                 }
             } catch (error) {
                 console.error('Không thể theo dõi lời nhắc thời khóa biểu mới:', error);
@@ -740,7 +745,7 @@
 
         function renderClassReminderNotifications() {
             if (!state.auth || !state.auth.loggedIn) return '';
-            const timetableReminders = getUpcomingTimetableReminders();
+            const timetableReminders = getVisibleTimetableReminders();
             const unreadCount = getUnreadClassReminderCount() + getUnreadTimetableReminderCount();
             const reminders = (state.classReminders || []).slice(0, 20);
             const renderClassItems = (items) => items.map(reminder => {
@@ -6403,7 +6408,7 @@ window.playBellSound = function(idx = 0) {
             if (all) all.checked = visibleInputs.length > 0 && visibleInputs.every(input => input.checked);
         }
 
-        window.addTimetableReminder = function(day, session, rowIndex, input, date, recipientIds) {
+        window.addTimetableReminder = async function(day, session, rowIndex, input, date, recipientIds) {
             if (!state.auth || state.auth.role !== 'gvcn') {
                 showToast('Chỉ GVCN mới được thêm lời nhắc thời khóa biểu.', 'error');
                 return false;
@@ -6446,6 +6451,7 @@ window.playBellSound = function(idx = 0) {
             state.timetableReminderWeek = weekStart;
             if (!state.timetableReminders) state.timetableReminders = {};
             if (!Array.isArray(state.timetableReminders[weekStart])) state.timetableReminders[weekStart] = [];
+            const previousReminders = [...state.timetableReminders[weekStart]];
             state.timetableReminders[weekStart].push({
                 id: `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
                 day,
@@ -6458,13 +6464,22 @@ window.playBellSound = function(idx = 0) {
                 recipientIds: selectedRecipientIds,
                 createdAt: new Date().toISOString()
             });
-            saveData();
+            try {
+                await window.saveDataAndSyncCloud();
+            } catch (error) {
+                state.timetableReminders[weekStart] = previousReminders;
+                if (!previousReminders.length) delete state.timetableReminders[weekStart];
+                saveData();
+                console.error('Không thể đồng bộ lời nhắc thời khóa biểu:', error);
+                showToast(error.message || 'Không thể lưu lời nhắc thời khóa biểu vào database.', 'error');
+                return false;
+            }
             renderLayout();
             showToast(`Đã lưu lời nhắc ngày ${formatTimetableDate(reminderDate)}.`, 'success');
             return true;
         };
 
-        window.editTimetableReminder = function(week, reminderId) {
+        window.editTimetableReminder = async function(week, reminderId) {
             if (!state.auth || state.auth.role !== 'gvcn' || state.selectedTimetableHistoryId) {
                 showToast('Chỉ GVCN mới được sửa lời nhắc của thời khóa biểu hiện tại.', 'error');
                 return;
@@ -6482,13 +6497,22 @@ window.playBellSound = function(idx = 0) {
                 showToast('Nội dung lời nhắc phải có từ 1 đến 500 ký tự.', 'error');
                 return;
             }
+            const previousMessage = reminder.message;
             reminder.message = normalizedMessage;
-            saveData();
+            try {
+                await window.saveDataAndSyncCloud();
+            } catch (error) {
+                reminder.message = previousMessage;
+                saveData();
+                console.error('Không thể đồng bộ thay đổi lời nhắc thời khóa biểu:', error);
+                showToast(error.message || 'Không thể cập nhật lời nhắc vào database.', 'error');
+                return;
+            }
             renderLayout();
             showToast('Đã cập nhật lời nhắc thời khóa biểu.', 'success');
         };
 
-        window.deleteTimetableReminder = function(week, reminderId) {
+        window.deleteTimetableReminder = async function(week, reminderId) {
             if (!state.auth || state.auth.role !== 'gvcn' || state.selectedTimetableHistoryId) {
                 showToast('Chỉ GVCN mới được xóa lời nhắc của thời khóa biểu hiện tại.', 'error');
                 return;
@@ -6502,9 +6526,18 @@ window.playBellSound = function(idx = 0) {
                 return;
             }
             if (!confirm('Bạn có chắc muốn xóa lời nhắc thời khóa biểu này?')) return;
+            const previousReminders = [...reminders];
             reminders.splice(reminderIndex, 1);
             if (!reminders.length) delete state.timetableReminders[week];
-            saveData();
+            try {
+                await window.saveDataAndSyncCloud();
+            } catch (error) {
+                state.timetableReminders[week] = previousReminders;
+                saveData();
+                console.error('Không thể đồng bộ xóa lời nhắc thời khóa biểu:', error);
+                showToast(error.message || 'Không thể xóa lời nhắc khỏi database.', 'error');
+                return;
+            }
             renderLayout();
             showToast('Đã xóa lời nhắc thời khóa biểu.', 'success');
         };
@@ -6595,11 +6628,11 @@ window.playBellSound = function(idx = 0) {
             }
         };
 
-        window.saveTimetableReminderFromModal = function(day, session, rowIndex) {
+        window.saveTimetableReminderFromModal = async function(day, session, rowIndex) {
             const textarea = document.getElementById('timetable-reminder-message');
             const date = document.getElementById('timetable-reminder-date').value;
             const recipientIds = [...document.querySelectorAll('[data-timetable-recipient]:checked')].map(input => input.value);
-            if (window.addTimetableReminder(day, session, rowIndex, textarea, date, recipientIds)) closeModal('timetable-reminder-modal');
+            if (await window.addTimetableReminder(day, session, rowIndex, textarea, date, recipientIds)) closeModal('timetable-reminder-modal');
         };
 
         window.updateTimetableEffectiveDate = function(value) {
@@ -8411,6 +8444,12 @@ window.parseExcelToDailySchedule = function(rows) {
                     });
                 }, 400);
             }
+        };
+        window.saveDataAndSyncCloud = async function() {
+            window.saveData();
+            if (!state.auth || !state.auth.loggedIn || state.auth.role !== 'gvcn' || !state.cloudProfile) return;
+            clearTimeout(window.cloudSaveTimer);
+            await window.persistCloudClass();
         };
         if (bannerTitleMigrated) window.saveData();
         

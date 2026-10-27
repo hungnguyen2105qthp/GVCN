@@ -604,7 +604,7 @@
 
   window.startStudentGradeSync = function () {
     if (window.studentGradeSyncInterval) clearInterval(window.studentGradeSyncInterval);
-    if (!state.auth || !state.auth.loggedIn || state.auth.role !== "hocsinh") return;
+    if (!state.auth || !state.auth.loggedIn || !["hocsinh", "bcs"].includes(state.auth.role)) return;
     window.studentGradeSyncInterval = setInterval(() => window.loadGrades().catch(error => {
         console.error("Không thể đồng bộ điểm học sinh:", error);
         if (!window.studentGradeSyncErrorShown) {
