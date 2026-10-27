@@ -588,10 +588,30 @@
   window.loadGrades = async function () {
     if (!state.auth || !state.auth.loggedIn) return;
     const client = await window.cloudReady;
-    const { data, error } = await client.from("grades").select("*").order("student_id");
+    const { data, error } = await client.from("grades")
+      .select("*")
+      .order("student_id")
+      .order("subject")
+      .order("academic_year")
+      .order("semester");
     if (error) throw error;
-    state.gradeRows = data || [];
-    if (state.currentTab === "diem-so") renderLayout();
+    const nextRows = data || [];
+    const changed = JSON.stringify(nextRows) !== JSON.stringify(state.gradeRows || []);
+    state.gradeRows = nextRows;
+    window.studentGradeSyncErrorShown = false;
+    if (changed && state.currentTab === "diem-so") renderLayout();
+  };
+
+  window.startStudentGradeSync = function () {
+    if (window.studentGradeSyncInterval) clearInterval(window.studentGradeSyncInterval);
+    if (!state.auth || !state.auth.loggedIn || state.auth.role !== "hocsinh") return;
+    window.studentGradeSyncInterval = setInterval(() => window.loadGrades().catch(error => {
+        console.error("Không thể đồng bộ điểm học sinh:", error);
+        if (!window.studentGradeSyncErrorShown) {
+          window.studentGradeSyncErrorShown = true;
+          showToast(error.message || "Không thể đồng bộ điểm mới.", "error");
+        }
+      }), 10000);
   };
 
   window.saveGradeVisibility = async function (studentId, visible) {

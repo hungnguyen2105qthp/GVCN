@@ -508,7 +508,7 @@
                         showToast(error.message || 'Không thể đồng bộ lời nhắc của lớp.', 'error');
                     }
                 }
-            }, 30000);
+            }, 10000);
         };
 
         window.notifyNewClassReminders = function() {
@@ -734,7 +734,7 @@
             });
             refresh();
             if (!window.timetableReminderSyncInterval) {
-                window.timetableReminderSyncInterval = setInterval(refresh, 30000);
+                window.timetableReminderSyncInterval = setInterval(refresh, 10000);
             }
         };
 
@@ -8139,6 +8139,7 @@ window.parseExcelToDailySchedule = function(rows) {
                 renderLayout();
                 window.startTimetableReminderSync();
                 window.startClassReminderSync();
+                window.startStudentGradeSync();
                 let gradeLoadError = '';
                 try {
                     await window.loadGrades();
@@ -8339,8 +8340,10 @@ window.parseExcelToDailySchedule = function(rows) {
         window.logout = function() {
             clearInterval(window.classReminderSyncInterval);
             clearInterval(window.timetableReminderSyncInterval);
+            clearInterval(window.studentGradeSyncInterval);
             window.classReminderSyncInterval = null;
             window.timetableReminderSyncInterval = null;
+            window.studentGradeSyncInterval = null;
             window.cloudReady.then(client => client.auth.signOut()).catch(error => {
                 console.error('Không thể kết thúc phiên đăng nhập:', error);
                 showToast('Không thể kết thúc phiên an toàn. Hãy tải lại trang.', 'error');
@@ -8425,6 +8428,7 @@ window.parseExcelToDailySchedule = function(rows) {
             renderLayout();
             window.startTimetableReminderSync();
             window.startClassReminderSync();
+            window.startStudentGradeSync();
             await window.loadGrades();
         }).catch(error => {
             console.error('Không thể khôi phục phiên online:', error);
