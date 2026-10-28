@@ -6563,15 +6563,22 @@ window.playBellSound = function(idx = 0) {
             }
         }
 
+        function getSelectedPublishedTimetableHistory() {
+            return (state.timetableHistory || []).find(entry =>
+                entry.id === state.selectedTimetableHistoryId && entry.published === true
+            ) || null;
+        }
+
         window.publishTimetable = function() {
             if (!state.auth || state.auth.role !== 'gvcn') {
                 showToast('Chỉ GVCN mới được công bố thời khóa biểu.', 'error');
                 return;
             }
-            if (state.selectedTimetableHistoryId) {
+            if (getSelectedPublishedTimetableHistory()) {
                 showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi công bố.', 'error');
                 return;
             }
+            if (!confirm('Xác nhận công khai thời khóa biểu hiện tại? Bản này sẽ được lưu vào lịch sử.')) return;
             if (!Array.isArray(state.timetableHistory)) state.timetableHistory = [];
             const publishedAt = new Date().toISOString();
             state.timetableHistory.push({
@@ -6667,9 +6674,11 @@ window.playBellSound = function(idx = 0) {
                             isTimetableReminderForCurrentUser(reminder)
                         );
                         return `<td class="border border-sky-200 p-1 align-top">
-                            <button type="button" onclick="openTimetableReminderModal(${dayIndex + 1}, '${session}', ${rowIndex}, '${reminderWeek}', '${escapeInlineJs(entry.subject || '')}', '${escapeInlineJs(entry.period || rowTemplate[rowIndex].period || '')}', '${escapeInlineJs(entry.time || rowTemplate[rowIndex].time || '')}')" class="w-full min-w-24 rounded-lg px-2 py-2 text-center font-semibold ${slotReminders.length ? 'bg-amber-50 text-amber-900 hover:bg-amber-100' : 'bg-transparent text-slate-800 hover:bg-sky-100'}">
+                            <button type="button" onclick="${canEdit
+                                ? `editTimetableSubject(${dayIndex + 1}, '${session}', ${rowIndex}, '${escapeInlineJs(entry.subject || '')}')`
+                                : `openTimetableReminderModal(${dayIndex + 1}, '${session}', ${rowIndex}, '${reminderWeek}', '${escapeInlineJs(entry.subject || '')}', '${escapeInlineJs(entry.period || rowTemplate[rowIndex].period || '')}', '${escapeInlineJs(entry.time || rowTemplate[rowIndex].time || '')}')`}" class="w-full min-w-24 rounded-lg px-2 py-2 text-center font-semibold ${slotReminders.length ? 'bg-amber-50 text-amber-900 hover:bg-amber-100' : 'bg-transparent text-slate-800 hover:bg-sky-100'}">
                                 ${escapeTimetableText(entry.subject || (canEdit ? 'Chọn môn học' : '—'))}
-                                ${slotReminders.length ? `<span class="mt-1 block text-[10px] font-black text-amber-700">${slotReminders.length} lời nhắc</span>` : `<span class="mt-1 block text-[10px] font-medium text-slate-400">${canEdit ? 'Bấm để nhập lời nhắc' : ''}</span>`}
+                                ${slotReminders.length ? `<span class="mt-1 block text-[10px] font-black text-amber-700">${slotReminders.length} lời nhắc</span>` : `<span class="mt-1 block text-[10px] font-medium text-slate-400">${canEdit ? 'Bấm để sửa môn học' : ''}</span>`}
                             </button>
                             ${canEdit ? `<button type="button" onclick="editTimetableSubject(${dayIndex + 1}, '${session}', ${rowIndex}, '${escapeInlineJs(entry.subject || '')}')" class="mt-1 w-full rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100"><i class="ph-bold ph-pencil-simple"></i> Sửa môn</button>` : ''}
                         </td>`;
@@ -6741,9 +6750,7 @@ window.playBellSound = function(idx = 0) {
             if (typeof window.html2pdf !== 'function') return showToast('Thư viện xuất PDF đã tải nhưng không sẵn sàng.', 'error');
 
             const today = new Date();
-            const selectedHistory = (state.timetableHistory || []).find(entry =>
-                entry.id === state.selectedTimetableHistoryId && entry.published === true
-            );
+            const selectedHistory = getSelectedPublishedTimetableHistory();
             const effectiveDate = selectedHistory && selectedHistory.effectiveDate
                 ? selectedHistory.effectiveDate
                 : state.timetable && state.timetable.effectiveDate
@@ -6810,9 +6817,8 @@ window.playBellSound = function(idx = 0) {
             const today = new Date();
             const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
             if (!state.timetable.effectiveDate) state.timetable.effectiveDate = todayString;
-            const selectedHistory = state.timetableHistory.find(entry =>
-                entry.id === state.selectedTimetableHistoryId && entry.published === true
-            );
+            const selectedHistory = getSelectedPublishedTimetableHistory();
+            if (state.selectedTimetableHistoryId && !selectedHistory) state.selectedTimetableHistoryId = '';
             const displayedSchedule = selectedHistory ? selectedHistory.schedule : state.dailySchedule;
             const displayedEffectiveDate = selectedHistory ? selectedHistory.effectiveDate : state.timetable.effectiveDate;
             const canEdit = !!(state.auth && state.auth.role === 'gvcn' && !selectedHistory);
@@ -6871,7 +6877,7 @@ window.playBellSound = function(idx = 0) {
                                 <div class="flex flex-wrap items-center justify-end gap-2">
                                     <img src="${escapeTimetableText(state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : './logo.png')}" alt="Logo trường THPT Quang Trung" class="h-20 w-24 rounded-xl bg-white object-contain p-1 shadow-sm border border-sky-100">
                                     <button onclick="downloadTimetablePdf()" class="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-800"><i class="ph-bold ph-download-simple"></i> Tải TKB PDF</button>
-                                    ${canEdit ? `<button type="button" onclick="publishTimetable()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-rose-700"><i class="ph-bold ph-megaphone"></i> Công bố TKB</button>` : ''}
+                                    ${canEdit ? `<button type="button" onclick="publishTimetable()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-rose-700"><i class="ph-bold ph-megaphone"></i> Xác nhận công khai</button>` : ''}
                                     ${selectedHistory && state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="editTimetableHistoryAsDraft()" class="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-amber-700"><i class="ph-bold ph-pencil-simple"></i> Sửa bản này</button>` : ''}
                                     ${canEdit ? `<label class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"><i class="ph-bold ph-upload-simple"></i> Tải file TKB<input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleTimetableExcelUpload(event)"></label>` : ''}
                                 </div>
@@ -6955,7 +6961,7 @@ window.playBellSound = function(idx = 0) {
                 showToast('Chỉ GVCN mới được thêm lời nhắc thời khóa biểu.', 'error');
                 return false;
             }
-            if (state.selectedTimetableHistoryId) {
+            if (getSelectedPublishedTimetableHistory()) {
                 showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi thêm lời nhắc.', 'error');
                 return false;
             }
@@ -7022,7 +7028,7 @@ window.playBellSound = function(idx = 0) {
         };
 
         window.editTimetableReminder = async function(week, reminderId) {
-            if (!state.auth || state.auth.role !== 'gvcn' || state.selectedTimetableHistoryId) {
+            if (!state.auth || state.auth.role !== 'gvcn' || getSelectedPublishedTimetableHistory()) {
                 showToast('Chỉ GVCN mới được sửa lời nhắc của thời khóa biểu hiện tại.', 'error');
                 return;
             }
@@ -7055,7 +7061,7 @@ window.playBellSound = function(idx = 0) {
         };
 
         window.deleteTimetableReminder = async function(week, reminderId) {
-            if (!state.auth || state.auth.role !== 'gvcn' || state.selectedTimetableHistoryId) {
+            if (!state.auth || state.auth.role !== 'gvcn' || getSelectedPublishedTimetableHistory()) {
                 showToast('Chỉ GVCN mới được xóa lời nhắc của thời khóa biểu hiện tại.', 'error');
                 return;
             }
@@ -7092,7 +7098,7 @@ window.playBellSound = function(idx = 0) {
             if (!subject) return showToast('Chưa có môn học ở tiết này.', 'error');
             const period = String(periodValue || slot && slot.period || `Tiết ${rowIndex + 1}`);
             const time = String(timeValue || slot && slot.time || '--:--');
-            const canManage = state.auth.role === 'gvcn' && !state.selectedTimetableHistoryId;
+            const canManage = state.auth.role === 'gvcn' && !getSelectedPublishedTimetableHistory();
             const weekStart = getTimetableWeekStart(weekValue || state.timetableReminderWeek || new Date());
             const reminderDate = getTimetableDateForDay(weekStart, day);
             const reminders = getTimetableReminderEntries().filter(reminder =>
@@ -7179,7 +7185,7 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableEffectiveDate = function(value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (state.selectedTimetableHistoryId) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
             if (!value) return showToast('Ngày áp dụng không hợp lệ.', 'error');
             if (value === state.timetable.effectiveDate) return;
             state.timetable.effectiveDate = value;
@@ -7188,7 +7194,7 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableSubject = function(day, session, rowIndex, value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (state.selectedTimetableHistoryId) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
             const subject = value.trim();
             if (getTimetableRows(session)[day - 1][rowIndex].subject === subject) return;
             if (!state.dailySchedule) state.dailySchedule = {};
@@ -7217,7 +7223,7 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableSlotMeta = function(session, rowIndex, field, value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (state.selectedTimetableHistoryId) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
             if (!['period', 'time'].includes(field)) return showToast('Trường thời khóa biểu không hợp lệ.', 'error');
             const metaValue = value.trim();
             const hasChanges = getTimetableRows(session).some(dayRows => dayRows[rowIndex][field] !== metaValue);
@@ -7243,7 +7249,7 @@ window.playBellSound = function(idx = 0) {
 
         window.addTimetableSlot = function(session) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (state.selectedTimetableHistoryId) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
             if (!state.dailySchedule) state.dailySchedule = {};
             for (let day = 1; day <= 6; day++) {
                 if (!Array.isArray(state.dailySchedule[day])) state.dailySchedule[day] = [];
