@@ -4820,8 +4820,8 @@ window.openEditGroupModal = function(id) {
         function openImportModal() {
             document.getElementById('modal-container').innerHTML = `
                 <div class="fixed inset-0 bg-slate-900/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" id="import-modal">
-                    <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col text-center pt-10 pb-8 px-8 relative">
-                        <button onclick="closeModal('import-modal')" class="absolute top-6 right-6 text-slate-400 hover:bg-slate-100 rounded-full p-2 transition-colors"><i class="ph-bold ph-x text-xl"></i></button>
+                    <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto overscroll-contain flex flex-col text-center pt-10 pb-8 px-8 relative">
+                        <button onclick="closeModal('import-modal')" aria-label="Đóng" title="Đóng" class="absolute top-4 right-4 z-10 text-slate-500 bg-white hover:bg-slate-100 rounded-full p-2 shadow-sm transition-colors"><i class="ph-bold ph-x text-xl"></i></button>
                         <div class="w-20 h-20 bg-blue-50 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-sm border border-blue-100"><i class="ph-fill ph-file-xls text-4xl text-blue-600"></i></div>
                         <h3 class="font-black text-slate-800 text-2xl mb-2">Nhập Danh Sách Lớp</h3>
                         <p class="text-sm text-slate-500 font-medium mb-8">Thêm nhanh nhiều học sinh từ file Excel</p>
@@ -4869,26 +4869,59 @@ window.openEditGroupModal = function(id) {
             const header = (rows[0] || []).map(value => String(value || '').trim().toLocaleLowerCase('vi'));
             const hasHeader = header.some(value => value.includes('họ tên') || value.includes('ho ten') || value.includes('họ và tên'));
             const legacyFormat = hasHeader && header.some(value => value.includes('lưu trú') || value.includes('luu tru'));
+            const normalizeHeader = value => String(value || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .replace(/đ/g, 'd')
+                .replace(/[^a-z0-9]/g, '');
+            const columnAliases = {
+                name: ['hoten', 'hovaten', 'hotenbatbuoc'],
+                gender: ['gioitinh'],
+                group: ['tothidua'],
+                role: ['vaitro'],
+                goal: ['muctieuphandau'],
+                talent: ['nangkhieu'],
+                dob: ['ngaysinh'],
+                address: ['diachi'],
+                phone: ['sdtlienhe', 'sodienthoai', 'dienthoai'],
+                citizenId: ['socccd', 'cccd'],
+                ethnicity: ['dantoc'],
+                isUnionMember: ['doanvienroichua', 'doanvien'],
+                prevAcademic: ['hoclucnamtruoc'],
+                prevConduct: ['renluyennamtruoc'],
+                prevTitle: ['danhhieunamtruocneuco', 'danhhieunamtruoc']
+            };
+            const columnIndexes = Object.fromEntries(Object.entries(columnAliases).map(([field, aliases]) => [
+                field,
+                header.findIndex(value => aliases.includes(normalizeHeader(value)))
+            ]));
+            const readCell = (row, field, fallbackIndex) => {
+                const index = hasHeader && !legacyFormat && columnIndexes[field] >= 0
+                    ? columnIndexes[field]
+                    : fallbackIndex;
+                return (row[index] || '').toString().trim();
+            };
             rows.forEach((row, i) => {
                 if (i === 0 && hasHeader) return;
-                const name = (row[0] || '').toString().trim(); if (!name) return;
+                const name = readCell(row, 'name', 0); if (!name) return;
                 importedStudents.push({
-                    id: currentId++, name: name, 
-                    gender: (row[1] || '').toString().trim() || 'Nam', 
-                    group: (row[2] || '').toString().trim() || 'Tổ 1', 
-                    role: (row[3] || '').toString().trim() || '', 
-                    goal: (row[4] || '').toString().trim() || '', 
-                    talent: (row[5] || '').toString().trim() || '', 
-                    dob: (row[6] || '').toString().trim() || '',
-                    address: legacyFormat ? '' : (row[7] || '').toString().trim(),
-                    phone: legacyFormat ? '' : (row[8] || '').toString().trim(),
-                    citizenId: legacyFormat ? '' : (row[9] || '').toString().trim(),
+                    id: currentId++, name,
+                    gender: readCell(row, 'gender', 1) || 'Nam',
+                    group: readCell(row, 'group', 2) || 'Tổ 1',
+                    role: readCell(row, 'role', 3),
+                    goal: readCell(row, 'goal', 4),
+                    talent: readCell(row, 'talent', 5),
+                    dob: readCell(row, 'dob', 6),
+                    address: legacyFormat ? '' : readCell(row, 'address', 7),
+                    phone: legacyFormat ? '' : readCell(row, 'phone', 8),
+                    citizenId: legacyFormat ? '' : readCell(row, 'citizenId', 9),
                     boardingType: legacyFormat ? (row[7] || '').toString().trim() || 'Ngoại trú' : 'Ngoại trú',
-                    ethnicity: (row[legacyFormat ? 8 : 10] || '').toString().trim() || 'Kinh',
-                    isUnionMember: (row[legacyFormat ? 9 : 11] || '').toString().trim() || 'Chưa',
-                    prevAcademic: (row[legacyFormat ? 10 : 12] || '').toString().trim() || '',
-                    prevConduct: (row[legacyFormat ? 11 : 13] || '').toString().trim() || '',
-                    prevTitle: legacyFormat ? '' : (row[14] || '').toString().trim(),
+                    ethnicity: (legacyFormat ? row[8] : readCell(row, 'ethnicity', 10) || '').toString().trim() || 'Kinh',
+                    isUnionMember: (legacyFormat ? row[9] : readCell(row, 'isUnionMember', 11) || '').toString().trim() || 'Chưa',
+                    prevAcademic: (legacyFormat ? row[10] : readCell(row, 'prevAcademic', 12) || '').toString().trim(),
+                    prevConduct: (legacyFormat ? row[11] : readCell(row, 'prevConduct', 13) || '').toString().trim(),
+                    prevTitle: legacyFormat ? '' : readCell(row, 'prevTitle', 14),
                     avatarUrl: '', points: 0, stars: 0, code: generateUniqueCode(), history: [] 
                 });
             });
