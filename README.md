@@ -4,6 +4,8 @@
 
 The static page alone cannot share data between browsers. Vercel serves the page and Supabase stores the class data, accounts, and grades. Grade privacy is enforced by PostgreSQL Row Level Security, not only by hiding controls in the page.
 
+The app does not set an automatic expiration period for cloud data. It remains in the Supabase project until it is deleted or affected by the project's lifecycle or retention policies; keep periodic exports as backups rather than treating the database as permanent archival storage.
+
 ### 1. Create the database
 
 1. Create a Supabase project.

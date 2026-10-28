@@ -1448,10 +1448,10 @@ function renderHorizontalNav() {
     // Xử lý dữ liệu Tiến Bộ (Top 3)
     const studentsWithProgress = state.students.map(s => {
         const weekProg = (s.points || 0) > 0 ? Math.floor((Math.sin(s.id * 10) + 1) * 15) + 5 : 0; 
-        return { ...s, weekProg: Math.min(weekProg, s.points || 0) };
+        return { ...s, weekProg: Math.max(0, Math.min(weekProg, Number(s.points) || 0)) };
     });
     const topProgressHtml = [...studentsWithProgress].sort((a,b) => b.weekProg - a.weekProg).slice(0, 3).map(s => {
-        const stars = '⭐'.repeat(Math.min(3, Math.ceil(s.weekProg / 5))) || '⭐';
+        const stars = '⭐'.repeat(Math.max(0, Math.min(3, Math.ceil(s.weekProg / 5)))) || '⭐';
         return `
             <div class="bg-white/10 hover:bg-white/20 p-4 rounded-2xl border border-white/5 transition-all cursor-pointer group mb-3" onclick="switchTab('tich-diem'); selectStudentForPoints(${s.id})">
                 <div class="font-bold text-white text-base mb-0.5">${getStudentDisplayName(s)}</div>
@@ -3504,7 +3504,11 @@ window.executePointsSubmission = function() {
                     const basePoints = s.points || 0;
                     const weekProg = basePoints > 0 ? Math.floor((Math.sin(s.id * 10) + 1) * 15) + 5 : 0; 
                     const monthProg = basePoints > 0 ? Math.floor((Math.cos(s.id * 5) + 1) * 30) + weekProg + 10 : 0;
-                    return { ...s, weekProg: Math.min(weekProg, basePoints), monthProg: Math.min(monthProg, basePoints) };
+                    return {
+                        ...s,
+                        weekProg: Math.max(0, Math.min(weekProg, basePoints)),
+                        monthProg: Math.max(0, Math.min(monthProg, basePoints))
+                    };
                 });
 
                 const topWeek = [...studentsWithProgress].sort((a,b) => b.weekProg - a.weekProg).slice(0, 10);
