@@ -28,9 +28,18 @@
     const filter = String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"));
     if (filter === "import" && Array.isArray(state.gradeImportOrder)) {
       const byId = new Map(students.map(student => [String(student.id), student]));
-      return state.gradeImportOrder.map(id => byId.get(String(id))).filter(Boolean);
+      students = state.gradeImportOrder.map(id => byId.get(String(id))).filter(Boolean);
+    } else if (filter !== "all") {
+      students = students.filter(student => String(student.group || "").trim() === filter);
     }
-    if (filter !== "all") students = students.filter(student => String(student.group || "").trim() === filter);
+    const roleFilter = String(state.gradeRoleFilter || "");
+    const search = String(state.gradeSearch || "").trim().toLocaleLowerCase("vi");
+    if (roleFilter) students = students.filter(student => String(student.role || "") === roleFilter);
+    if (search) students = students.filter(student =>
+      [student.name, student.code, student.identifier].some(value =>
+        String(value || "").toLocaleLowerCase("vi").includes(search)
+      )
+    );
     return students;
   }
 
@@ -48,6 +57,14 @@
     const totalWeight = weighted.reduce((sum, [, weight]) => sum + weight, 0);
     const total = weighted.reduce((sum, [score, weight]) => sum + Number(score) * weight, 0);
     return (Math.round((total / totalWeight) * 10) / 10).toFixed(1);
+  }
+
+  function publishedAverage(record) {
+    if (!record || record.average_visible !== true) return null;
+    const rawAverage = record.reported_average ?? computeAverage(record);
+    if (rawAverage === "") return null;
+    const average = Number(rawAverage);
+    return Number.isFinite(average) ? average : null;
   }
 
   function selectedContext() {
@@ -441,6 +458,44 @@
     if (!student) {
       return `<div class="rounded-2xl border border-slate-200 bg-white p-10 text-center font-semibold text-slate-500">Tài khoản này chưa được liên kết với hồ sơ học sinh.</div>`;
     }
+    if (context.semester === "Cả năm") {
+      const rows = subjects.map(subject => {
+        const hk1 = gradeFor(student.id, { ...context, subject, semester: "HK1" });
+        const hk2 = gradeFor(student.id, { ...context, subject, semester: "HK2" });
+        const hk1Average = publishedAverage(hk1);
+        const hk2Average = publishedAverage(hk2);
+        const annualAverage = hk1Average !== null && hk2Average !== null
+          ? ((hk1Average + 2 * hk2Average) / 3).toFixed(1)
+          : null;
+        const comment = hk2.comment || hk1.comment || "Chưa có nhận xét";
+        const formatAverage = value => value === null
+          ? `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`
+          : escapeHtmlText(value.toFixed ? value.toFixed(1) : value);
+        return `<tr class="hover:bg-teal-50/40">
+          <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${escapeHtmlText(student.name || "Học sinh")}</td>
+          <td class="border border-slate-200 bg-emerald-50 px-3 py-3 font-black text-emerald-900">${escapeHtmlText(subject)}</td>
+          <td class="border border-slate-200 px-3 py-3 text-center font-black text-slate-700">${formatAverage(hk1Average)}</td>
+          <td class="border border-slate-200 px-3 py-3 text-center font-black text-slate-700">${formatAverage(hk2Average)}</td>
+          <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${annualAverage === null ? `<span class="text-xs font-semibold text-slate-400">Chưa công bố đủ 2 học kỳ</span>` : formatAverage(Number(annualAverage))}</td>
+          <td class="min-w-52 border border-slate-200 px-3 py-3 text-sm text-slate-600">${escapeHtmlText(comment)}</td>
+        </tr>`;
+      }).join("");
+      return `<div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <table class="min-w-[850px] border-collapse text-sm">
+          <thead class="bg-sky-700 text-white"><tr>
+            <th class="border border-white/20 px-3 py-3">Họ tên</th>
+            <th class="border border-white/20 px-3 py-3">Môn học</th>
+            <th class="border border-white/20 px-3 py-3">ĐTB học kỳ 1</th>
+            <th class="border border-white/20 px-3 py-3">ĐTB học kỳ 2</th>
+            <th class="border border-white/20 px-3 py-3">ĐTB cả năm</th>
+            <th class="border border-white/20 px-3 py-3">Nhận xét</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">Điểm cả năm được tính theo công thức (HK1 + 2 × HK2) / 3 và chỉ hiển thị khi cả hai học kỳ đã được công bố.</p>
+      </div>`;
+    }
+
     const rows = subjects.map(subject => {
       const row = gradeFor(student.id, { ...context, subject });
       const scores = GRADE_COLUMNS.map(([field]) => {
@@ -482,7 +537,15 @@
       ? String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"))
       : "all";
     const gradeGroups = [...new Set((state.students || []).map(student => String(student.group || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi"));
-    const gradeScopeLabel = groupFilter === "all" ? "cả lớp" : groupFilter === "import" ? "danh sách vừa nhập" : groupFilter;
+    const gradeRoles = [...new Set((state.students || []).map(student => String(student.role || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi"));
+    const gradeRoleFilter = String(state.gradeRoleFilter || "");
+    const gradeSearch = String(state.gradeSearch || "");
+    const gradeScopeParts = [
+      groupFilter === "all" ? "cả lớp" : groupFilter === "import" ? "danh sách vừa nhập" : groupFilter,
+      gradeRoleFilter ? `chức vụ ${gradeRoleFilter}` : "",
+      gradeSearch ? `tìm “${gradeSearch}”` : "",
+    ].filter(Boolean);
+    const gradeScopeLabel = gradeScopeParts.join(" · ");
     const years = state.academicYear || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
     const context = {
       subject: (document.getElementById("grade-subject") || {}).value || "Toán",
@@ -546,16 +609,21 @@
           ${isTeacher() ? `<select id="grade-subject" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             ${subjects.map(subject => `<option class="text-slate-900" ${context.subject === subject ? "selected" : ""}>${subject}</option>`).join("")}
           </select>
+          <input type="search" value="${escapeHtmlAttr(gradeSearch)}" aria-label="Tìm học sinh theo tên hoặc mã" placeholder="Tìm học sinh..." onchange="state.gradeSearch=this.value.trim();renderLayout()" class="w-40 rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none placeholder:text-emerald-100">
           <select id="grade-group-filter" aria-label="Lọc học sinh theo tổ" onchange="state.gradeGroupFilter=this.value;renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             <option value="all" class="text-slate-900" ${groupFilter === "all" ? "selected" : ""}>Cả lớp</option>
             ${Array.isArray(state.gradeImportOrder) ? `<option value="import" class="text-slate-900" ${groupFilter === "import" ? "selected" : ""}>Danh sách vừa nhập</option>` : ""}
             ${gradeGroups.map(group => `<option value="${escapeHtmlAttr(group)}" class="text-slate-900" ${groupFilter === group ? "selected" : ""}>${escapeHtmlText(group)}</option>`).join("")}
+          </select>
+          <select aria-label="Lọc học sinh theo chức vụ" onchange="state.gradeRoleFilter=this.value;renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
+            <option value="" class="text-slate-900">Tất cả chức vụ</option>
+            ${gradeRoles.map(role => `<option value="${escapeHtmlAttr(role)}" class="text-slate-900" ${gradeRoleFilter === role ? "selected" : ""}>${escapeHtmlText(role)}</option>`).join("")}
           </select>` : ""}
           <select id="grade-year" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
             <option class="text-slate-900" ${context.academic_year === years ? "selected" : ""}>${escapeHtmlText(years)}</option>
           </select>
           <select id="grade-semester" onchange="renderLayout()" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 font-bold text-white outline-none">
-            ${["HK1", "HK2"].map(semester => `<option class="text-slate-900" ${context.semester === semester ? "selected" : ""}>${semester}</option>`).join("")}
+            ${(isTeacher() ? ["HK1", "HK2"] : ["HK1", "HK2", "Cả năm"]).map(semester => `<option class="text-slate-900" ${context.semester === semester ? "selected" : ""}>${semester}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -675,7 +743,12 @@
       await upsertGradeRecords(await window.cloudReady, records);
       await window.loadGrades();
       const filter = String(state.gradeGroupFilter || (Array.isArray(state.gradeImportOrder) ? "import" : "all"));
-      const scope = filter === "all" ? "cả lớp" : filter === "import" ? "danh sách vừa nhập" : filter;
+      const scopeParts = [
+        filter === "all" ? "cả lớp" : filter === "import" ? "danh sách vừa nhập" : filter,
+        state.gradeRoleFilter ? `chức vụ ${state.gradeRoleFilter}` : "",
+        state.gradeSearch ? `tìm “${state.gradeSearch}”` : "",
+      ].filter(Boolean);
+      const scope = scopeParts.join(" · ");
       showToast(visible ? `Đã công bố ĐTBmhk cho ${scope}.` : `Đã ẩn ĐTBmhk với ${scope}.`, "success");
     } catch (error) {
       console.error("Không thể cập nhật quyền xem điểm trung bình:", error);
