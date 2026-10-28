@@ -1108,12 +1108,15 @@ function renderBottomNav() {
 function renderHeader() {
     let roleName = state.admin.name;
     let roleDesc = state.admin.role;
+    let headerAvatarUrl = state.admin.avatarUrl;
     if (state.auth && state.auth.role === 'bcs') {
         roleName = 'Cán bộ lớp';
         roleDesc = 'Ban cán sự lớp';
     } else if (state.auth && state.auth.role === 'hocsinh') {
-        roleName = 'Học sinh';
-        roleDesc = 'Tra cứu và theo dõi';
+        const student = state.students.find(item => String(item.id) === String(state.auth.studentId));
+        roleName = student ? getStudentDisplayName(student) : state.auth.fullName || 'Học sinh';
+        roleDesc = student ? `${student.group || 'Học sinh'} · ${state.admin.className || ''}` : 'Tra cứu và theo dõi';
+        headerAvatarUrl = student && student.avatarUrl || '';
     } else if (state.auth && state.auth.role === 'bgh') {
         roleName = 'Ban Giám Hiệu';
         roleDesc = 'Giám sát hệ thống';
@@ -1135,11 +1138,11 @@ function renderHeader() {
                 
                 <div class="flex items-center gap-3 bg-white border border-slate-200 py-1.5 px-2 sm:px-4 rounded-2xl shadow-sm transition-all">
                     <div class="text-right hidden sm:block ${(!state.auth || state.auth.role === 'gvcn') ? 'cursor-pointer group hover:text-blueAccent' : ''}" ${(!state.auth || state.auth.role === 'gvcn') ? 'onclick="openEditAdminModal()"' : ''}>
-                        <div class="text-xs font-bold text-slate-800 transition-colors">${roleName}</div>
-                        <div class="text-[9px] text-slate-500 uppercase tracking-widest font-semibold">${roleDesc}</div>
+                        <div class="text-xs font-bold text-slate-800 transition-colors">${escapeHtmlText(roleName)}</div>
+                        <div class="text-[9px] text-slate-500 uppercase tracking-widest font-semibold">${escapeHtmlText(roleDesc)}</div>
                     </div>
                    <div class="relative flex-shrink-0 ${(!state.auth || state.auth.role === 'gvcn') ? 'cursor-pointer group hover:scale-105 transition-transform' : ''}" ${(!state.auth || state.auth.role === 'gvcn') ? 'onclick="openEditAdminModal()"' : ''}>
-                        ${getAvatarImg(state.admin.avatarUrl, state.admin.name, "w-9 h-9")}
+                        ${getAvatarImg(headerAvatarUrl, roleName, "w-9 h-9")}
                     </div>
                 </div>
                 
@@ -1345,6 +1348,34 @@ function renderHorizontalNav() {
         renderLayout();
     };
 
+    window.openTeacherMessageEditModal = function() {
+        if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được sửa lời nhắn giáo viên.', 'error');
+        const content = String(state.theme.teacherMsgContent || '"Các em không cần phải hoàn hảo ngay từ hôm nay.<br>Chỉ cần mỗi ngày tiến bộ hơn một chút."')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]*>/g, '');
+        document.getElementById('modal-container').innerHTML = `
+            <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" id="teacher-message-modal" onclick="if(event.target===this) closeModal('teacher-message-modal')">
+                <form onsubmit="saveTeacherMessage(); return false;" class="w-full max-w-xl space-y-4 rounded-3xl bg-white p-6 shadow-2xl">
+                    <div class="flex items-center justify-between"><h3 class="text-xl font-black text-pink-800">Sửa lời nhắn giáo viên</h3><button type="button" onclick="closeModal('teacher-message-modal')" aria-label="Đóng" class="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"><i class="ph-bold ph-x"></i></button></div>
+                    <label class="block text-sm font-bold text-slate-700">Tiêu đề<input id="teacher-message-title" maxlength="80" value="${escapeHtmlAttr(state.theme.teacherMsgTitle || 'GIÁO VIÊN NHẮN')}" class="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3"></label>
+                    <label class="block text-sm font-bold text-slate-700">Lời nhắn<textarea id="teacher-message-content" maxlength="1000" rows="5" class="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3">${escapeHtmlText(content)}</textarea></label>
+                    <label class="block text-sm font-bold text-slate-700">Chữ ký<input id="teacher-message-signature" maxlength="80" value="${escapeHtmlAttr(state.theme.teacherMsgSign || 'Giáo viên chủ nhiệm')}" class="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3"></label>
+                    <button type="submit" class="w-full rounded-xl bg-pink-700 px-5 py-3 font-black text-white hover:bg-pink-800">Lưu và hiển thị cho cả lớp</button>
+                </form>
+            </div>`;
+    };
+
+    window.saveTeacherMessage = function() {
+        if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được sửa lời nhắn giáo viên.', 'error');
+        state.theme.teacherMsgTitle = document.getElementById('teacher-message-title').value.trim() || 'GIÁO VIÊN NHẮN';
+        state.theme.teacherMsgContent = document.getElementById('teacher-message-content').value.trim();
+        state.theme.teacherMsgSign = document.getElementById('teacher-message-signature').value.trim() || 'Giáo viên chủ nhiệm';
+        saveData();
+        closeModal('teacher-message-modal');
+        renderLayout();
+        showToast('Đã lưu lời nhắn để hiển thị cho toàn bộ tài khoản trong lớp.', 'success');
+    };
+
     function renderViewTongQuan() {
     // --- 1. LẤY DỮ LIỆU HÔM NAY ĐỂ ĐÁNH GIÁ (YÊU CẦU 3) ---
     const d = new Date();
@@ -1534,8 +1565,8 @@ function renderHorizontalNav() {
                 </div>
                 
                 <!-- Block Sửa được -->
-                <div class="mt-4 bg-white rounded-2xl p-4 md:p-5 shadow-sm border-l-4 border-emerald-400 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
+                <div class="mt-4 bg-white rounded-2xl p-5 md:p-7 shadow-sm border-l-4 border-emerald-400 flex flex-col md:flex-row md:items-center justify-between gap-5">
+                    <div class="min-w-0 flex-[2]">
                         <div class="flex items-center gap-2 text-sm font-bold text-slate-800 mb-1">
                             <div class="w-3 h-3 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50"></div>
                             <span class="px-1">TUẦN ${escapeHtmlText(formatDateForDisplay(weekStart))} ➔ ${escapeHtmlText(formatDateForDisplay(weekEnd))}</span>
@@ -1546,18 +1577,17 @@ function renderHorizontalNav() {
                             <input id="home-week-topic-date" type="date" value="${escapeHtmlAttr(selectedWeekDate)}" onchange="selectHomeWeekDate(this.value)" class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700">
                             <button type="button" onclick="shiftHomeWeek(1)" aria-label="Xem tuần sau" title="Tuần sau" class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-600 hover:border-emerald-300 hover:bg-emerald-50"><i class="ph-bold ph-caret-right"></i></button>
                         </div>
-                        <div class="text-sm text-slate-600 pl-5">
+                        <div class="pl-5 text-base text-slate-700">
                             ${canEditHome
-                              ? `<label class="block"><span class="mb-1 block text-xs font-black text-slate-600">Chủ đề tuần ${escapeHtmlText(formatDateForDisplay(weekStart))} – ${escapeHtmlText(formatDateForDisplay(weekEnd))}</span><textarea id="home-week-topic" rows="2" maxlength="240" onchange="saveHomeWeekTopic(this.value)" placeholder="Nhập chủ đề cho tuần này..." class="w-full max-w-2xl resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100">${escapeHtmlText(weekTopic)}</textarea><span class="mt-1 block text-[10px] font-medium text-slate-400">Chủ đề được lưu riêng theo từng tuần.</span></label>`
-                              : `<span class="font-semibold">${weekTopic ? escapeHtmlText(weekTopic) : 'Chưa có chủ đề cho tuần này.'}</span>`}
+                              ? `<label class="block"><span class="mb-2 block text-sm font-black text-slate-700">Chủ đề tuần ${escapeHtmlText(formatDateForDisplay(weekStart))} – ${escapeHtmlText(formatDateForDisplay(weekEnd))}</span><textarea id="home-week-topic" rows="3" maxlength="240" onchange="saveHomeWeekTopic(this.value)" placeholder="Nhập chủ đề cho tuần này..." class="w-full resize-y rounded-2xl border border-emerald-200 bg-emerald-50/30 px-4 py-3 text-base font-bold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100">${escapeHtmlText(weekTopic)}</textarea><span class="mt-2 block text-[11px] font-medium text-slate-400">Chủ đề được lưu riêng theo từng tuần.</span></label>`
+                              : `<div class="rounded-2xl bg-emerald-50 px-4 py-3 text-lg font-black leading-relaxed text-emerald-950">${weekTopic ? escapeHtmlText(weekTopic) : 'Chưa có chủ đề cho tuần này.'}</div>`}
                         </div>
                     </div>
-                    <!-- YÊU CẦU 2: Tách chữ Mục tiêu tuần -->
-                    <div class="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex items-start gap-2">
-                        🎯 <span class="text-sm font-bold text-blue-800 flex-shrink-0">Mục tiêu tuần:</span>
+                    <div class="w-full rounded-xl border border-blue-100 bg-blue-50/50 p-3 md:w-[28%] md:min-w-[220px]">
+                        <div class="mb-1 text-[11px] font-black uppercase tracking-wide text-blue-800">🎯 Mục tiêu tuần</div>
                         ${canEditHome
-                          ? `<span class="text-sm text-blue-800 italic outline-none cursor-text hover:bg-blue-100/50 transition-colors px-1 rounded flex-1" contenteditable="true" onblur="state.theme.weeklyGoal = this.innerText; saveData();" title="Nhấn vào để sửa">${state.theme.weeklyGoal || 'Ổn định nề nếp – xây dựng tinh thần tập thể'}</span>`
-                          : `<span class="text-sm text-blue-800 italic px-1 flex-1">${escapeHtmlText(state.theme.weeklyGoal || 'Ổn định nề nếp – xây dựng tinh thần tập thể')}</span>`}
+                          ? `<span class="block text-xs italic leading-relaxed text-blue-800 outline-none cursor-text hover:bg-blue-100/50 transition-colors px-1 rounded" contenteditable="true" onblur="state.theme.weeklyGoal = this.innerText; saveData();" title="Nhấn vào để sửa">${escapeHtmlText(state.theme.weeklyGoal || 'Ổn định nề nếp – xây dựng tinh thần tập thể')}</span>`
+                          : `<span class="block text-xs italic leading-relaxed text-blue-800">${escapeHtmlText(state.theme.weeklyGoal || 'Ổn định nề nếp – xây dựng tinh thần tập thể')}</span>`}
                     </div>
                 </div>
             </div>
@@ -1641,17 +1671,12 @@ function renderHorizontalNav() {
             <!-- Row Cuối: Lời Nhắn & Truy Cập Nhanh -->
             <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
                 <div class="xl:col-span-5 bg-pink-50 rounded-[2rem] p-6 md:p-8 shadow-sm border border-pink-100 relative group flex flex-col justify-center">
-                    <h3 class="font-black text-lg text-pink-700 flex items-center gap-2 mb-4 ${canEditHome ? 'outline-none cursor-text hover:opacity-75 transition-opacity' : ''}" ${canEditHome ? 'contenteditable="true" onblur="state.theme.teacherMsgTitle = this.innerText; saveData();" title="Nhấn vào để sửa tiêu đề"' : ''}>
-                        💌 ${escapeHtmlText(state.theme.teacherMsgTitle || 'GIÁO VIÊN NHẮN')}
-                    </h3>
-                    <blockquote class="text-slate-700 font-medium leading-relaxed mb-6 border-l-4 border-pink-200 pl-4 ${canEditHome ? 'outline-none cursor-text hover:bg-pink-100/30 transition-colors' : ''}" ${canEditHome ? 'contenteditable="true" onblur="state.theme.teacherMsgContent = this.innerHTML; saveData();" title="Nhấn vào để sửa lời nhắn"' : ''}>
-                        ${canEditHome
-                          ? (state.theme.teacherMsgContent || '"Các em không cần phải hoàn hảo ngay từ hôm nay.<br>Chỉ cần mỗi ngày tiến bộ hơn một chút."')
-                          : escapeHtmlText(state.theme.teacherMsgContent || '"Các em không cần phải hoàn hảo ngay từ hôm nay.<br>Chỉ cần mỗi ngày tiến bộ hơn một chút."').replace(/&lt;br\s*\/?&gt;/gi, '<br>')}
-                    </blockquote>
-                    <div class="font-black text-pink-800 ${canEditHome ? 'outline-none cursor-text hover:opacity-75 transition-opacity' : ''}" ${canEditHome ? 'contenteditable="true" onblur="state.theme.teacherMsgSign = this.innerText; saveData();" title="Nhấn vào để sửa chữ ký"' : ''}>
-                        — ${escapeHtmlText(state.theme.teacherMsgSign || 'Giáo viên chủ nhiệm')}
+                    <div class="mb-4 flex items-center justify-between gap-3">
+                        <h3 class="font-black text-lg text-pink-700 flex items-center gap-2">💌 ${escapeHtmlText(state.theme.teacherMsgTitle || 'GIÁO VIÊN NHẮN')}</h3>
+                        ${canEditHome ? '<button type="button" onclick="openTeacherMessageEditModal()" class="rounded-lg border border-pink-200 bg-white px-3 py-2 text-xs font-black text-pink-700 hover:bg-pink-100"><i class="ph-bold ph-pencil-simple mr-1"></i>Sửa lời nhắn</button>' : ''}
                     </div>
+                    <blockquote class="whitespace-pre-line text-slate-700 font-medium leading-relaxed mb-6 border-l-4 border-pink-200 pl-4">${escapeHtmlText(String(state.theme.teacherMsgContent || '"Các em không cần phải hoàn hảo ngay từ hôm nay.<br>Chỉ cần mỗi ngày tiến bộ hơn một chút."').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, ''))}</blockquote>
+                    <div class="font-black text-pink-800">— ${escapeHtmlText(state.theme.teacherMsgSign || 'Giáo viên chủ nhiệm')}</div>
                 </div>
                 
                 <div class="xl:col-span-7 bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-slate-100">
@@ -1676,6 +1701,8 @@ function renderHorizontalNav() {
     const isBGH = state.auth && state.auth.role === 'bgh';
     const isBCS = state.auth && state.auth.role === 'bcs';
     if (state.auth && state.auth.role === 'hocsinh') return renderStudentSelfStatistics();
+          if (!Array.isArray(window.selectedStudentDeletionIds)) window.selectedStudentDeletionIds = [];
+          const selectedStudentIds = new Set(window.selectedStudentDeletionIds.map(String));
     const filters = state.studentFilters || (state.studentFilters = { group: '', role: '', code: '' });
     const managedStudents = isBCS
         ? state.students.filter(student => canBcsManageStudent(student))
@@ -1704,6 +1731,7 @@ function renderHorizontalNav() {
         
         return `
         <div class="self-start h-fit w-full bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200 border-t-4 border-t-${borderColorClass.replace('border-', '')} flex flex-col items-center relative hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
+            ${state.auth.role === 'gvcn' ? `<label class="absolute left-4 top-4 z-20 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm" title="Chọn ${escapeHtmlAttr(getStudentDisplayName(s))}"><input type="checkbox" ${selectedStudentIds.has(String(s.id)) ? 'checked' : ''} onchange="toggleStudentDeletionSelection('${escapeHtmlAttr(s.id)}', this.checked)" class="h-4 w-4 accent-red-600" aria-label="Chọn học sinh ${escapeHtmlAttr(getStudentDisplayName(s))}"></label>` : ''}
             
             <div class="absolute top-4 right-4 z-20">
                 <button onclick="toggleStudentMenu(event, ${s.id})" class="text-slate-300 hover:text-slate-600 p-1 rounded-full focus:outline-none transition-colors"><i class="ph-bold ph-dots-three-vertical text-xl"></i></button>
@@ -1755,12 +1783,87 @@ function renderHorizontalNav() {
                 <input type="search" value="${escapeHtmlAttr(filters.code)}" onchange="state.studentFilters.code=this.value.trim();renderLayout()" placeholder="Lọc theo mã học sinh..." class="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700">
             </div>
             <div class="text-sm font-bold text-slate-500">Hiển thị ${visibleStudents.length} / ${managedStudents.length} học sinh</div>
+            ${state.auth && state.auth.role === 'gvcn' ? `
+                <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-red-100 bg-white p-3 shadow-sm">
+                    <span class="mr-auto text-xs font-bold text-slate-600">${selectedStudentIds.size} học sinh đã chọn</span>
+                    <button type="button" onclick='selectVisibleStudentsForDeletion(${JSON.stringify(visibleStudents.map(student => String(student.id)))})' class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100">Chọn danh sách đang hiển thị</button>
+                    <button type="button" onclick="clearStudentDeletionSelection()" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">Bỏ chọn</button>
+                    ${filters.group ? `<button type="button" onclick="deleteStudentRosterByGroup('${escapeInlineJs(filters.group)}')" class="rounded-xl bg-orange-50 px-3 py-2 text-xs font-black text-orange-700 hover:bg-orange-100">Xóa học sinh tổ ${escapeHtmlText(filters.group)}</button>` : ''}
+                    <button type="button" onclick="deleteSelectedStudentsFromRoster()" ${selectedStudentIds.size ? '' : 'disabled'} class="rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40">Xóa đã chọn</button>
+                    <button type="button" onclick="deleteAllStudentsFromRoster()" ${state.students.length ? '' : 'disabled'} class="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">Xóa cả danh sách lớp</button>
+                </div>
+            ` : ''}
             <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 items-start gap-6 xl:gap-8">
                 ${studentsHtml || '<div class="col-span-full text-center text-slate-400 bg-white rounded-2xl border border-slate-200 py-12">Không tìm thấy học sinh phù hợp.</div>'}
             </div>
         </div>
     `;
 }
+
+window.toggleStudentDeletionSelection = function(studentId, checked) {
+    const selected = new Set((window.selectedStudentDeletionIds || []).map(String));
+    if (checked) selected.add(String(studentId));
+    else selected.delete(String(studentId));
+    window.selectedStudentDeletionIds = [...selected];
+    renderLayout();
+};
+
+window.selectVisibleStudentsForDeletion = function(studentIds) {
+    window.selectedStudentDeletionIds = [...new Set((studentIds || []).map(String))];
+    renderLayout();
+};
+
+window.clearStudentDeletionSelection = function() {
+    window.selectedStudentDeletionIds = [];
+    renderLayout();
+};
+
+function archiveStudentsFromRoster(studentIds) {
+    const ids = new Set(studentIds.map(String));
+    const removed = state.students.filter(student => ids.has(String(student.id)));
+    if (!removed.length) return [];
+    if (!Array.isArray(state.archivedStudents)) state.archivedStudents = [];
+    const archivedIds = new Set(state.archivedStudents.map(student => String(student.id)));
+    state.archivedStudents.push(...removed
+        .filter(student => !archivedIds.has(String(student.id)))
+        .map(student => ({ ...student, archivedAt: new Date().toISOString() })));
+    state.students = state.students.filter(student => !ids.has(String(student.id)));
+    window.selectedStudentDeletionIds = (window.selectedStudentDeletionIds || []).filter(id => !ids.has(String(id)));
+    return removed;
+}
+
+window.deleteSelectedStudentsFromRoster = function() {
+    if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xóa học sinh.', 'error');
+    const ids = [...new Set((window.selectedStudentDeletionIds || []).map(String))];
+    if (!ids.length) return showToast('Hãy chọn ít nhất một học sinh.', 'error');
+    if (!confirm(`Đưa ${ids.length} học sinh khỏi danh sách hiện tại? Tài khoản đăng nhập, điểm và điểm danh được giữ lại.`)) return;
+    const removed = archiveStudentsFromRoster(ids);
+    if (!removed.length) return showToast('Không tìm thấy học sinh đã chọn.', 'error');
+    saveData();
+    renderLayout();
+    showToast(`Đã xóa ${removed.length} học sinh khỏi danh sách; dữ liệu liên quan được giữ lại.`, 'success');
+};
+
+window.deleteStudentRosterByGroup = function(groupName) {
+    if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xóa học sinh.', 'error');
+    const students = state.students.filter(student => student.group === groupName);
+    if (!students.length) return showToast(`Tổ ${groupName} không có học sinh trong danh sách.`, 'error');
+    if (!confirm(`Xóa ${students.length} học sinh thuộc tổ ${groupName} khỏi danh sách? Tài khoản đăng nhập, điểm và điểm danh được giữ lại.`)) return;
+    const removed = archiveStudentsFromRoster(students.map(student => student.id));
+    saveData();
+    renderLayout();
+    showToast(`Đã xóa ${removed.length} học sinh tổ ${groupName} khỏi danh sách.`, 'success');
+};
+
+window.deleteAllStudentsFromRoster = function() {
+    if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xóa học sinh.', 'error');
+    if (!state.students.length) return showToast('Danh sách học sinh đang trống.', 'error');
+    if (!confirm(`Xóa toàn bộ ${state.students.length} học sinh khỏi danh sách lớp? Tài khoản đăng nhập, điểm và điểm danh được giữ lại.`)) return;
+    const removed = archiveStudentsFromRoster(state.students.map(student => student.id));
+    saveData();
+    renderLayout();
+    showToast(`Đã xóa ${removed.length} học sinh khỏi danh sách lớp.`, 'success');
+};
 
 function renderStudentSelfStatistics() {
     const account = (state.users || []).find(user => String(user.id) === String(state.auth && state.auth.userId));
@@ -2613,6 +2716,70 @@ window.executePointsSubmission = function() {
             state.attendanceTab = tab; 
             renderLayout(); 
         };
+        window.openAttendanceStudentStats = function(studentId) {
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xem thống kê điểm danh cá nhân.', 'error');
+            const student = state.students.find(item => String(item.id) === String(studentId));
+            if (!student) return showToast('Không tìm thấy hồ sơ học sinh.', 'error');
+
+            const today = new Date();
+            const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            monday.setDate(monday.getDate() - (monday.getDay() === 0 ? 6 : monday.getDay() - 1));
+            const weekStart = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+            const monthStart = `${todayString.slice(0, 7)}-01`;
+            const labels = {
+                present: { label: 'Có mặt', color: 'text-emerald-700', pill: 'bg-emerald-50' },
+                late: { label: 'Đi muộn', color: 'text-amber-700', pill: 'bg-amber-50' },
+                excused: { label: 'Vắng có phép', color: 'text-blue-700', pill: 'bg-blue-50' },
+                unexcused: { label: 'Vắng không phép', color: 'text-red-700', pill: 'bg-red-50' }
+            };
+            const countRange = (start, end) => {
+                const counts = { present: 0, late: 0, excused: 0, unexcused: 0 };
+                Object.entries(state.attendanceRecords || {}).forEach(([key, records]) => {
+                    const date = key.split('_')[0];
+                    const status = records && records[student.id];
+                    if (date >= start && date <= end && Object.prototype.hasOwnProperty.call(counts, status)) counts[status]++;
+                });
+                return counts;
+            };
+            const weekCounts = countRange(weekStart, todayString);
+            const monthCounts = countRange(monthStart, todayString);
+            const countCards = (title, counts, tone) => `
+                <section class="rounded-2xl border ${tone} p-4">
+                    <h4 class="mb-3 text-sm font-black">${title}</h4>
+                    <div class="grid grid-cols-2 gap-2">
+                        ${Object.entries(labels).map(([status, info]) => `<div class="rounded-xl ${info.pill} p-3"><div class="text-[10px] font-bold ${info.color}">${info.label}</div><div class="mt-1 text-2xl font-black ${info.color}">${counts[status]}</div></div>`).join('')}
+                    </div>
+                </section>`;
+            const monthEntries = Object.entries(state.attendanceRecords || {})
+                .filter(([key, records]) => {
+                    const date = key.split('_')[0];
+                    return date >= monthStart && date <= todayString && records && labels[records[student.id]];
+                })
+                .sort(([left], [right]) => right.localeCompare(left));
+            const detailRows = monthEntries.map(([key, records]) => {
+                const [date, session] = key.split('_');
+                const info = labels[records[student.id]];
+                return `<tr class="border-b border-slate-100"><td class="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-700">${escapeHtmlText(formatDateForDisplay(date))}</td><td class="px-4 py-3 text-sm text-slate-600">${escapeHtmlText(session || '—')}</td><td class="px-4 py-3 text-sm font-bold ${info.color}">${info.label}</td></tr>`;
+            }).join('');
+
+            document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" id="attendance-student-stats-modal" onclick="if(event.target===this) closeModal('attendance-student-stats-modal')">
+                    <section class="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+                        <header class="flex items-center justify-between bg-indigo-950 px-6 py-5 text-white">
+                            <div><h3 class="text-lg font-black">Thống kê chuyên cần cá nhân</h3><p class="mt-1 text-sm font-semibold text-indigo-200">${escapeHtmlText(getStudentDisplayName(student))} · ${escapeHtmlText(student.group || '')}</p></div>
+                            <button type="button" onclick="closeModal('attendance-student-stats-modal')" aria-label="Đóng" class="rounded-full bg-white/10 p-2 hover:bg-white/20"><i class="ph-bold ph-x text-lg"></i></button>
+                        </header>
+                        <div class="space-y-5 overflow-y-auto p-5 md:p-6">
+                            <div class="grid gap-4 md:grid-cols-2">${countCards(`Tuần này · ${formatDateForDisplay(weekStart)} – ${formatDateForDisplay(todayString)}`, weekCounts, 'border-indigo-100 bg-indigo-50/40')}${countCards(`Tháng này · ${formatDateForDisplay(monthStart)} – ${formatDateForDisplay(todayString)}`, monthCounts, 'border-sky-100 bg-sky-50/40')}</div>
+                            <section class="overflow-hidden rounded-2xl border border-slate-200">
+                                <h4 class="bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">Chi tiết điểm danh trong tháng này</h4>
+                                <div class="overflow-x-auto"><table class="w-full text-left"><thead class="text-xs uppercase text-slate-500"><tr><th class="px-4 py-2">Ngày</th><th class="px-4 py-2">Buổi</th><th class="px-4 py-2">Trạng thái</th></tr></thead><tbody>${detailRows || '<tr><td colspan="3" class="px-4 py-8 text-center text-sm text-slate-400">Chưa có dữ liệu điểm danh trong tháng này.</td></tr>'}</tbody></table></div>
+                            </section>
+                        </div>
+                    </section>
+                </div>`;
+        };
         window.changeAttendanceSession = function(session) {
             window.currentAttendanceSession = session;
             renderLayout();
@@ -2778,6 +2945,9 @@ window.executePointsSubmission = function() {
                 
                 const tableBodyRows = attendanceStudents.map((s, index) => {
                     let presentCount = 0, absentCount = 0;
+                    const studentName = state.auth && state.auth.role === 'gvcn'
+                        ? `<button type="button" onclick="openAttendanceStudentStats('${escapeInlineJs(s.id)}')" class="text-left font-bold text-indigo-700 underline decoration-dotted underline-offset-2 hover:text-indigo-950">${escapeHtmlText(getStudentDisplayName(s))}</button>`
+                        : escapeHtmlText(getStudentDisplayName(s));
                     const dateCells = allDates.map(d => {
                         const status = state.attendanceRecords[d][s.id]; 
                         let cellContent = '';
@@ -2792,7 +2962,7 @@ window.executePointsSubmission = function() {
                     return `
                         <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 !== 0 ? 'bg-slate-50/30' : 'bg-white'}">
                             <td class="p-4 text-center font-bold text-slate-400 text-xs">${index + 1}</td>
-                            <td class="p-4 font-bold text-slate-800 whitespace-nowrap text-sm border-l border-slate-100">${getStudentDisplayName(s)}</td>
+                            <td class="p-4 font-bold text-slate-800 whitespace-nowrap text-sm border-l border-slate-100">${studentName}</td>
                             <td class="p-4 text-center border-l border-slate-100 font-bold text-sm bg-orange-50/30"><span class="text-emerald-600">${presentCount}</span><span class="text-slate-300 mx-1.5">/</span><span class="text-red-500">${absentCount}</span></td>
                             ${dateCells}
                         </tr>
@@ -3599,7 +3769,8 @@ function renderViewBaoCao() {
     const attendanceStats = state.students.map(student => {
         const week = { present: 0, late: 0, excused: 0, unexcused: 0 };
         const month = { present: 0, late: 0, excused: 0, unexcused: 0 };
-        Object.entries(state.attendanceRecords || {}).forEach(([date, records]) => {
+        Object.entries(state.attendanceRecords || {}).forEach(([recordKey, records]) => {
+            const date = recordKey.split('_')[0];
             const status = records && records[student.id];
             if (!['present', 'late', 'excused', 'unexcused'].includes(status)) return;
             if (date >= weekStartStr && date <= todayStr) week[status]++;
@@ -3631,7 +3802,7 @@ function renderViewBaoCao() {
     const tableRowsHtml = sortedStudents.map((s, index) => `
         <div class="grid grid-cols-12 gap-4 py-4 border-b border-slate-100 items-center hover:bg-blue-50/50 transition-colors text-sm font-semibold text-slate-700">
             <div class="col-span-1 pl-6 text-slate-400">${index + 1}</div>
-            <div class="col-span-4 font-bold text-slate-800 flex items-center gap-3">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-8 h-8 rounded-full')} ${getStudentDisplayName(s)}</div>
+            <div class="col-span-4 font-bold text-slate-800 flex items-center gap-3">${getAvatarImg(s.avatarUrl, getStudentDisplayName(s), 'w-8 h-8 rounded-full')} ${state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="openStudentHistoryModal('${escapeInlineJs(s.id)}')" class="text-left text-indigo-700 underline decoration-dotted underline-offset-2 hover:text-indigo-950">${escapeHtmlText(getStudentDisplayName(s))}</button>` : escapeHtmlText(getStudentDisplayName(s))}</div>
             <div class="col-span-3"><span class="bg-slate-100 px-3 py-1 rounded-lg text-xs border border-slate-200">${s.group}</span></div>
             <div class="col-span-2 font-black text-blueAccent text-base">${s.points || 0}</div>
             <div class="col-span-2 font-bold text-orange-500 flex items-center gap-1">${s.stars || 0} <i class="ph-fill ph-star"></i></div>
@@ -3639,13 +3810,13 @@ function renderViewBaoCao() {
     `).join('');
     const pointTransactions = state.students.flatMap(student => (student.history || [])
         .filter(record => Number(record.points) !== 0)
-        .map(record => ({ ...record, studentName: getStudentDisplayName(student), group: student.group || '' })))
+        .map(record => ({ ...record, studentId: student.id, studentName: getStudentDisplayName(student), group: student.group || '' })))
         .sort((a, b) => new Date(b.date) - new Date(a.date))
         .slice(0, 100);
     const pointTransactionsHtml = pointTransactions.map(record => `
         <tr class="border-b border-slate-100 hover:bg-slate-50">
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${escapeTimetableText(record.date ? new Date(record.date).toLocaleString('vi-VN') : '')}</td>
-            <td class="px-4 py-3 text-sm font-bold text-slate-800">${escapeTimetableText(record.studentName)}</td>
+            <td class="px-4 py-3 text-sm font-bold text-slate-800">${state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="openStudentHistoryModal('${escapeInlineJs(record.studentId)}')" class="text-left text-indigo-700 underline decoration-dotted underline-offset-2 hover:text-indigo-950">${escapeTimetableText(record.studentName)}</button>` : escapeTimetableText(record.studentName)}</td>
             <td class="px-4 py-3 text-xs text-slate-500">${escapeTimetableText(record.group)}</td>
             <td class="px-4 py-3 text-sm font-black ${record.points > 0 ? 'text-emerald-600' : 'text-red-600'}">${record.points > 0 ? '+' : ''}${record.points}</td>
             <td class="px-4 py-3 text-sm text-slate-700">${escapeTimetableText(record.reason || '')}</td>
@@ -4632,7 +4803,7 @@ window.saveStudentEdit = function() {
     if (state.editingStudentId && existingIndex < 0) {
         return showToast("Không tìm thấy hồ sơ học sinh cần cập nhật.", "error");
     }
-    const newId = state.students.length > 0 ? Math.max(...state.students.map(s => Number(s.id) || 0)) + 1 : 1;
+    const newId = getNextStudentId();
     const candidate = existingIndex >= 0
         ? { ...state.students[existingIndex], ...studentData }
         : { ...studentData, id: newId, points: 0, stars: 0, history: [], comment: '' };
@@ -4653,26 +4824,13 @@ window.saveStudentEdit = function() {
 };
 window.deleteStudent = function(id) {
     if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xóa học sinh.', 'error');
-    const studentIndex = state.students.findIndex(s => s.id === id);
-    if (studentIndex === -1) return;
-    
-    const studentName = state.students[studentIndex].name;
-    if (confirm(`Bạn có chắc chắn muốn xóa học sinh "${studentName}" khỏi danh sách không? Hành động này sẽ xóa luôn cả lịch sử thi đua của em ấy và không thể hoàn tác!`)) {
-        
-        state.students.splice(studentIndex, 1);
-        
-        if (state.attendanceRecords) {
-            for (const date in state.attendanceRecords) {
-                if (state.attendanceRecords[date][id]) {
-                    delete state.attendanceRecords[date][id];
-                }
-            }
-        }
-        
-        saveData();
-        renderLayout();
-        showToast(`Đã xóa triệt để ${studentName} khỏi hệ thống!`, "success");
-    }
+    const student = state.students.find(item => String(item.id) === String(id));
+    if (!student) return;
+    if (!confirm(`Xóa ${student.name} khỏi danh sách học sinh? Tài khoản đăng nhập, điểm và điểm danh được giữ lại.`)) return;
+    archiveStudentsFromRoster([student.id]);
+    saveData();
+    renderLayout();
+    showToast(`Đã xóa ${student.name} khỏi danh sách; dữ liệu liên quan được giữ lại.`, 'success');
 };
 window.openEditGroupModal = function(id) {
             state.editingGroupId = id; 
@@ -4767,11 +4925,40 @@ window.openEditGroupModal = function(id) {
             "Danh hiệu năm trước (nếu có)"
         ];
 
+        function normalizeStudentBirthDate(value) {
+            if (value instanceof Date && !Number.isNaN(value.getTime())) {
+                return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+            }
+            if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+                const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
+                return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+            }
+            const text = String(value || '').trim();
+            const dayFirst = text.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{4})$/);
+            if (dayFirst) {
+                const [, day, month, year] = dayFirst;
+                const date = new Date(Number(year), Number(month) - 1, Number(day));
+                if (date.getFullYear() === Number(year) && date.getMonth() === Number(month) - 1 && date.getDate() === Number(day)) {
+                    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                }
+                return text;
+            }
+            const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (isoDate) return text;
+            return text;
+        }
+
+        function formatStudentBirthDate(value) {
+            const normalized = normalizeStudentBirthDate(value);
+            const isoDate = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            return isoDate ? `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}` : normalized;
+        }
+
        window.downloadTemplate = function() {
             const headers = [studentProfileHeaders];
             const sampleData = [
-                ["Nguyễn Văn A", "Nam", "Tổ 1", "Lớp trưởng", "Học sinh giỏi", "Toán", "2008-05-15", "Hà Nội", "0900000001", "", "Kinh", "Rồi", "Tốt", "Tốt", "Học sinh giỏi"],
-                ["Trần Thị B", "Nữ", "Tổ 2", "Thành viên", "Tiến bộ", "Văn nghệ", "2008-08-20", "Hà Nội", "0900000002", "", "Kinh", "Chưa", "Khá", "Tốt", ""]
+                ["Nguyễn Văn A", "Nam", "Tổ 1", "Lớp trưởng", "Học sinh giỏi", "Toán", "15/05/2008", "Hà Nội", "0900000001", "", "Kinh", "Rồi", "Tốt", "Tốt", "Học sinh giỏi"],
+                ["Trần Thị B", "Nữ", "Tổ 2", "Thành viên", "Tiến bộ", "Văn nghệ", "20/08/2008", "Hà Nội", "0900000002", "", "Kinh", "Chưa", "Khá", "Tốt", ""]
             ];
             
             const ws = XLSX.utils.aoa_to_sheet([...headers, ...sampleData]);
@@ -4795,7 +4982,7 @@ window.openEditGroupModal = function(id) {
                         student.role || "",
                         student.goal || "",
                         student.talent || "",
-                        student.dob || "",
+                        formatStudentBirthDate(student.dob || ""),
                         student.address || "",
                         student.phone || "",
                         student.citizenId || "",
@@ -4831,7 +5018,7 @@ window.openEditGroupModal = function(id) {
                                 <input type="file" id="excel-upload-input" class="hidden" accept=".xlsx, .xls, .csv" onchange="handleExcelUpload(event)">
                                 <div class="p-4 bg-white rounded-full shadow-sm mb-4 group-hover:scale-110 transition-transform"><i class="ph-fill ph-upload-simple text-3xl text-blueAccent"></i></div>
                                 <div class="font-bold text-slate-700 text-base mb-1">Bấm để chọn file Excel (.xlsx)</div>
-                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Cột A–G: Họ tên, Giới tính, Tổ thi đua, Vai trò, Mục tiêu, Năng khiếu, Ngày sinh<br>H–K: Địa chỉ, SĐT liên hệ, CCCD, Dân tộc<br><span class="text-orange-600">L–O: Đoàn viên, Học lực năm trước, Rèn luyện năm trước, Danh hiệu năm trước</span></div>
+                                <div class="text-[11px] text-slate-500 text-center leading-relaxed font-semibold">Cột A–G: Họ tên, Giới tính, Tổ thi đua, Vai trò, Mục tiêu, Năng khiếu, Ngày sinh (DD/MM/YYYY)<br>H–K: Địa chỉ, SĐT liên hệ, CCCD, Dân tộc<br><span class="text-orange-600">L–O: Đoàn viên, Học lực năm trước, Rèn luyện năm trước, Danh hiệu năm trước</span></div>
                             </div>
                             
                             <div class="relative py-2"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-200"></div></div><div class="relative flex justify-center"><span class="bg-white px-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest">Hoặc dán văn bản</span></div></div>
@@ -4863,9 +5050,14 @@ window.openEditGroupModal = function(id) {
             processImportRows(text.split('\n').map(row => row.split('\t')));
         }
 
+      function getNextStudentId() {
+            const students = [...(state.students || []), ...(state.archivedStudents || [])];
+            return students.reduce((maxId, student) => Math.max(maxId, Number(student.id) || 0), 0) + 1;
+        }
+
       function processImportRows(rows) {
             const importedStudents = [];
-            let currentId = state.students.length > 0 ? Math.max(...state.students.map(s => s.id)) + 1 : 1;
+            let currentId = getNextStudentId();
             const header = (rows[0] || []).map(value => String(value || '').trim().toLocaleLowerCase('vi'));
             const hasHeader = header.some(value => value.includes('họ tên') || value.includes('ho ten') || value.includes('họ và tên'));
             const legacyFormat = hasHeader && header.some(value => value.includes('lưu trú') || value.includes('luu tru'));
@@ -4912,7 +5104,7 @@ window.openEditGroupModal = function(id) {
                     role: readCell(row, 'role', 3),
                     goal: readCell(row, 'goal', 4),
                     talent: readCell(row, 'talent', 5),
-                    dob: readCell(row, 'dob', 6),
+                    dob: normalizeStudentBirthDate(readCell(row, 'dob', 6)),
                     address: legacyFormat ? '' : readCell(row, 'address', 7),
                     phone: legacyFormat ? '' : readCell(row, 'phone', 8),
                     citizenId: legacyFormat ? '' : readCell(row, 'citizenId', 9),
@@ -5024,9 +5216,20 @@ window.openEditGroupModal = function(id) {
         }
 
         function deleteGroup(id) {
-            const group = state.groups.find(g => g.id === id); if (!group) return;
-            if (state.students.filter(s => s.group === group.name).length > 0) return showToast("Không thể xóa tổ đang có học sinh!", "error");
-            if (confirm(`Xóa tổ thi đua này?`)) { state.groups = state.groups.filter(g => g.id !== id); saveData(); renderLayout(); showToast(`Đã xóa tổ!`); }
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được xóa tổ.', 'error');
+            const group = state.groups.find(g => String(g.id) === String(id)); if (!group) return;
+            const students = state.students.filter(student => student.group === group.name);
+            const confirmation = students.length
+                ? `Xóa tổ ${group.name} và đưa ${students.length} học sinh của tổ khỏi danh sách? Tài khoản đăng nhập, điểm và điểm danh được giữ lại.`
+                : `Xóa tổ ${group.name}?`;
+            if (!confirm(confirmation)) return;
+            if (students.length) archiveStudentsFromRoster(students.map(student => student.id));
+            state.groups = state.groups.filter(item => String(item.id) !== String(id));
+            saveData();
+            renderLayout();
+            showToast(students.length
+                ? `Đã xóa tổ ${group.name} và ${students.length} hồ sơ khỏi danh sách.`
+                : `Đã xóa tổ ${group.name}.`, 'success');
         }
 
         function saveGroupEdit() {
@@ -5171,7 +5374,7 @@ window.openEditGroupModal = function(id) {
             if (!['XOA DU LIEU', 'XÓA DỮ LIỆU'].includes(document.getElementById('wipe-confirm-input').value.trim().toUpperCase())) return showToast("Gõ đúng chữ XOA DU LIEU", "error");
             
             // Dòng này là mình khai báo xóa sạch học sinh, nhóm, điểm danh...
-            state.students = []; state.groups = []; state.attendanceRecords = {}; state.criteria = null; 
+            state.students = []; state.archivedStudents = []; state.groups = []; state.attendanceRecords = {}; state.criteria = null;
             
             // ĐÂY LÀ DÒNG MÌNH VỪA THÊM VÀO ĐỂ XÓA LUÔN CÔNG VIỆC VÀ HÀNH TRÌNH
             state.tasks = []; state.journeys = []; 
@@ -5405,6 +5608,79 @@ window.performDirectLookup = function() {
         };
 
         /* --- TÍNH NĂNG XEM LỊCH SỬ HỌC SINH --- */
+     window.openStudentHistoryEntryForm = function(studentId, recordId = null) {
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được sửa sổ theo dõi.', 'error');
+            const student = state.students.find(item => String(item.id) === String(studentId));
+            if (!student) return showToast('Không tìm thấy hồ sơ học sinh.', 'error');
+            const record = recordId === null
+                ? null
+                : (student.history || []).find(item => String(item.id) === String(recordId));
+            if (recordId !== null && !record) return showToast('Không tìm thấy ghi nhận cần sửa.', 'error');
+            const date = record && record.date ? new Date(record.date) : new Date();
+            if (Number.isNaN(date.getTime())) date.setTime(Date.now());
+            date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+            const dateValue = date.toISOString().slice(0, 16);
+            const formId = 'student-history-entry-form';
+            document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" id="student-history-entry-modal" onclick="if(event.target===this) openStudentHistoryModal('${escapeInlineJs(student.id)}')">
+                    <form id="${formId}" onsubmit="saveStudentHistoryEntry('${escapeInlineJs(student.id)}', ${record ? `'${escapeInlineJs(record.id)}'` : 'null'}); return false;" class="w-full max-w-lg space-y-5 rounded-3xl bg-white p-6 shadow-2xl">
+                        <div class="flex items-start justify-between gap-4">
+                            <div><h3 class="text-xl font-black text-slate-800">${record ? 'Sửa ghi nhận' : 'Thêm ghi nhận / lỗi'}</h3><p class="mt-1 text-sm font-semibold text-slate-500">${escapeHtmlText(getStudentDisplayName(student))}</p></div>
+                            <button type="button" onclick="openStudentHistoryModal('${escapeInlineJs(student.id)}')" aria-label="Đóng" class="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"><i class="ph-bold ph-x"></i></button>
+                        </div>
+                        <label class="block text-sm font-bold text-slate-700">Lý do
+                            <textarea id="student-history-entry-reason" required maxlength="300" rows="3" class="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium outline-none focus:border-indigo-500">${escapeHtmlText(record && record.reason || '')}</textarea>
+                        </label>
+                        <label class="block text-sm font-bold text-slate-700">Điểm (số âm để trừ, số dương để cộng)
+                            <input id="student-history-entry-points" type="number" step="1" required value="${Number(record && record.points) || ''}" class="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500">
+                        </label>
+                        <label class="block text-sm font-bold text-slate-700">Ngày giờ ghi nhận
+                            <input id="student-history-entry-date" type="datetime-local" required value="${dateValue}" class="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-500">
+                        </label>
+                        <div class="flex gap-3">
+                            <button type="button" onclick="openStudentHistoryModal('${escapeInlineJs(student.id)}')" class="flex-1 rounded-xl bg-slate-100 px-4 py-3 font-bold text-slate-700 hover:bg-slate-200">Hủy</button>
+                            <button type="submit" class="flex-1 rounded-xl bg-indigo-700 px-4 py-3 font-black text-white hover:bg-indigo-800">${record ? 'Lưu chỉnh sửa' : 'Thêm ghi nhận'}</button>
+                        </div>
+                    </form>
+                </div>`;
+        };
+
+        window.saveStudentHistoryEntry = function(studentId, recordId = null) {
+            if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được sửa sổ theo dõi.', 'error');
+            const student = state.students.find(item => String(item.id) === String(studentId));
+            if (!student) return showToast('Không tìm thấy hồ sơ học sinh.', 'error');
+            const reason = document.getElementById('student-history-entry-reason').value.trim();
+            const points = Number(document.getElementById('student-history-entry-points').value);
+            const dateValue = document.getElementById('student-history-entry-date').value;
+            const date = new Date(dateValue);
+            if (!reason || !Number.isFinite(points) || points === 0 || !dateValue || Number.isNaN(date.getTime())) {
+                return showToast('Vui lòng nhập lý do, ngày giờ hợp lệ và số điểm khác 0.', 'error');
+            }
+            if (!Array.isArray(student.history)) student.history = [];
+            const record = recordId === null
+                ? null
+                : student.history.find(item => String(item.id) === String(recordId));
+            if (recordId !== null && !record) return showToast('Không tìm thấy ghi nhận cần sửa.', 'error');
+            const oldPoints = Number(record && record.points) || 0;
+            const change = points - oldPoints;
+            student.points = (Number(student.points) || 0) + change;
+            student.stars = Math.max(0, (Number(student.stars) || 0) + change);
+            const entry = {
+                id: record ? record.id : Date.now() + Math.random(),
+                date: date.toISOString(),
+                points,
+                reason,
+                performedBy: state.auth.fullName || state.auth.username || 'GVCN',
+                performedByRole: state.auth.role
+            };
+            if (record) Object.assign(record, entry);
+            else student.history.push(entry);
+            saveData();
+            renderLayout();
+            openStudentHistoryModal(student.id);
+            showToast(record ? 'Đã cập nhật ghi nhận và điểm.' : 'Đã thêm ghi nhận và cập nhật điểm.', 'success');
+        };
+
      window.openStudentHistoryModal = function(id) {
             const student = state.students.find(s => String(s.id) === String(id));
             if (!student) return;
@@ -5444,13 +5720,14 @@ window.performDirectLookup = function() {
                             <div class="flex-1 bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 relative">
                                 
                                 <!-- Nút Xóa LUÔN HIỆN -->
-                                ${state.auth && state.auth.role === 'gvcn' ? `<button onclick="deleteHistoryRecord(${student.id}, ${h.id})" class="absolute -top-3 -right-3 bg-white border border-red-200 text-red-400 hover:bg-red-500 hover:text-white rounded-full w-8 h-8 flex items-center justify-center transition-all shadow-md z-20" title="Xóa & Hoàn tác điểm">
-                                    <i class="ph-bold ph-trash text-sm"></i>
-                                </button>` : ''}
+                                ${state.auth && state.auth.role === 'gvcn' ? `<div class="absolute right-2 top-2 flex gap-1">
+                                    <button onclick="openStudentHistoryEntryForm('${escapeInlineJs(student.id)}', '${escapeInlineJs(h.id)}')" class="rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-black text-indigo-700 hover:bg-indigo-100" title="Sửa ghi nhận và điểm">Sửa</button>
+                                    <button onclick="deleteHistoryRecord('${escapeInlineJs(student.id)}', '${escapeInlineJs(h.id)}')" class="rounded-lg bg-red-50 px-2 py-1 text-[10px] font-black text-red-600 hover:bg-red-100" title="Xóa và hoàn tác điểm"><i class="ph-bold ph-trash"></i></button>
+                                </div>` : ''}
                                 
                                 <div class="flex justify-between items-start gap-4 mb-2">
-                                    <div class="font-bold text-slate-800 text-base leading-tight pr-6">${h.reason}</div>
-                                    <div class="font-black text-xl flex-shrink-0 ${colorTheme.text} bg-white px-2 py-0.5 rounded-lg border ${colorTheme.border} shadow-sm">${colorTheme.sign}${h.points}</div>
+                                    <div class="font-bold text-slate-800 text-base leading-tight pr-16">${escapeHtmlText(h.reason || 'Ghi nhận điểm')}</div>
+                                    <div class="font-black text-xl flex-shrink-0 ${colorTheme.text} bg-white px-2 py-0.5 rounded-lg border ${colorTheme.border} shadow-sm">${colorTheme.sign}${Number(h.points) || 0}</div>
                                 </div>
                                 <div class="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
                                     <i class="ph-fill ph-clock"></i> ${timeStr} <span class="mx-1">•</span> <i class="ph-fill ph-calendar-blank"></i> ${dateStr}
@@ -5466,7 +5743,10 @@ window.performDirectLookup = function() {
                         <div class="bg-primary text-white p-6 flex justify-between items-center px-8 relative overflow-hidden">
                             <div class="absolute inset-0 opacity-20 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4=')]"></div>
                             <h3 class="font-black text-xl flex items-center gap-3 relative z-10"><i class="ph-fill ph-clock-counter-clockwise text-accent text-2xl"></i> LỊCH SỬ THI ĐUA</h3>
-                            <button onclick="closeModal('history-student-modal')" class="text-white hover:text-red-400 bg-white/10 hover:bg-white/20 p-2.5 rounded-full transition-colors relative z-10"><i class="ph-bold ph-x text-lg"></i></button>
+                            <div class="relative z-10 flex items-center gap-2">
+                                ${state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="openStudentHistoryEntryForm('${escapeInlineJs(student.id)}')" class="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-white hover:bg-emerald-600"><i class="ph-bold ph-plus mr-1"></i>Thêm ghi nhận</button>` : ''}
+                                <button onclick="closeModal('history-student-modal')" aria-label="Đóng" class="text-white hover:text-red-400 bg-white/10 hover:bg-white/20 p-2.5 rounded-full transition-colors"><i class="ph-bold ph-x text-lg"></i></button>
+                            </div>
                         </div>
                         
                         <!-- Header / Profile -->
@@ -6249,7 +6529,9 @@ window.playBellSound = function(idx = 0) {
                     { period: 'Tiết 4', time: '16:30 - 17:15' }
                 ];
             const dayRows = Array.from({ length: 6 }, (_, index) => {
-                const entries = (schedule && schedule[index + 1] || []).filter(entry => {
+                const daySchedule = schedule && schedule[index + 1];
+                const entries = (Array.isArray(daySchedule) ? daySchedule : []).filter(entry => {
+                    if (!entry || typeof entry !== 'object') return false;
                     const hour = Number(String(entry.time || '').match(/(\d{1,2})(?::|h)/i)?.[1]);
                     const entrySession = entry.session || (hour >= 12 ? 'Chiều' : 'Sáng');
                     return entrySession === session;
@@ -6317,8 +6599,8 @@ window.playBellSound = function(idx = 0) {
             const rowCount = rows[0].length;
             const body = Array.from({ length: rowCount }, (_, rowIndex) => {
                 const cells = rows.map(day => day[rowIndex] || {});
-                const period = cells[0].period || `Tiết ${rowIndex + 1}`;
-                const time = cells[0].time || '--:--';
+                const period = String(cells[0].period || `Tiết ${rowIndex + 1}`);
+                const time = String(cells[0].time || '--:--');
                 return `<tr>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;padding:5px 4px;">${escapeTimetableText(period.replace(/^Tiết\\s*/i, ''))}</td>
                     <td style="border:1px solid #8ba8c8;background:#eff6ff;text-align:center;font-weight:800;white-space:nowrap;padding:5px 6px;">${escapeTimetableText(time)}</td>
@@ -6343,10 +6625,22 @@ window.playBellSound = function(idx = 0) {
         }
 
         window.downloadTimetablePdf = async function() {
-            if (typeof html2pdf !== 'function') {
-                showToast('Không tải được công cụ xuất PDF. Hãy kiểm tra kết nối rồi thử lại.', 'error');
-                return;
+            if (typeof window.html2pdf !== 'function') {
+                try {
+                    await new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = 'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js';
+                        script.onload = resolve;
+                        script.onerror = () => reject(new Error('Không tải được thư viện xuất PDF từ các máy chủ dự phòng.'));
+                        document.head.appendChild(script);
+                    });
+                } catch (error) {
+                    console.error('Không thể tải thư viện xuất thời khóa biểu PDF:', error);
+                    showToast(error.message || 'Không tải được công cụ xuất PDF. Hãy kiểm tra kết nối rồi thử lại.', 'error');
+                    return;
+                }
             }
+            if (typeof window.html2pdf !== 'function') return showToast('Thư viện xuất PDF đã tải nhưng không sẵn sàng.', 'error');
 
             const today = new Date();
             const selectedHistory = (state.timetableHistory || []).find(entry => entry.id === state.selectedTimetableHistoryId);
@@ -6363,6 +6657,7 @@ window.playBellSound = function(idx = 0) {
             const printRoot = document.createElement('div');
             printRoot.id = 'timetable-pdf-export';
             printRoot.setAttribute('style', 'width:1100px;margin:0 auto;background:#fff;padding:28px 34px;box-sizing:border-box;font-family:Arial,sans-serif;color:#172554;');
+            try {
             printRoot.innerHTML = `
                 <div style="border:3px solid #93c5fd;border-radius:22px;padding:20px 24px;background:linear-gradient(145deg,#f0f9ff 0%,#ffffff 48%,#eff6ff 100%);">
                     <header style="display:grid;grid-template-columns:1fr 2fr 150px;align-items:center;gap:18px;min-height:120px;">
@@ -6385,20 +6680,25 @@ window.playBellSound = function(idx = 0) {
                     <footer style="margin-top:16px;padding:10px;text-align:center;border-radius:40px;background:#dbeafe;color:#1e3a8a;font-size:20px;font-weight:900;font-style:italic;">Đoàn kết - Nỗ lực - Thành công</footer>
                 </div>`;
             document.body.appendChild(printRoot);
-            try {
+                if (document.fonts && document.fonts.ready) await document.fonts.ready;
+                await Promise.all(Array.from(printRoot.querySelectorAll('img')).map(image =>
+                    typeof image.decode === 'function' ? image.decode().catch(error => {
+                        console.warn('Không tải được logo thời khóa biểu; vẫn tiếp tục xuất PDF:', error);
+                    }) : Promise.resolve()
+                ));
                 const safeClassName = String(state.admin && state.admin.className || 'Lop').replace(/[^a-z0-9_-]+/gi, '_');
-                await html2pdf().set({
+                await window.html2pdf().set({
                     margin: [6, 6, 6, 6],
                     filename: `Thoi_Khoa_Bieu_${safeClassName}_${effectiveDate}.pdf`,
                     image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: 1100 },
+                    html2canvas: { scale: 1.5, useCORS: true, backgroundColor: '#ffffff', width: 1100, windowWidth: 1200, scrollX: 0, scrollY: 0 },
                     jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-                    pagebreak: { mode: ['avoid-all', 'css'] }
+                    pagebreak: { mode: ['css', 'legacy'] }
                 }).from(printRoot).save();
                 showToast('Đã tải thời khóa biểu PDF theo mẫu, kèm logo trường.', 'success');
             } catch (error) {
                 console.error('Không thể xuất thời khóa biểu PDF:', error);
-                showToast('Xuất thời khóa biểu thất bại. Vui lòng thử lại.', 'error');
+                showToast(`Xuất thời khóa biểu thất bại: ${error.message || 'Vui lòng thử lại.'}`, 'error');
             } finally {
                 printRoot.remove();
             }
@@ -7539,18 +7839,21 @@ window.parseExcelToDailySchedule = function(rows) {
                         `;
                     }
 
-                    const borderColor = student.gender === 'Nữ' ? 'border-pink-100' : 'border-blue-100';
+                    const isCurrentStudent = state.auth && state.auth.role === 'hocsinh' &&
+                        String(state.auth.studentId) === String(student.id);
+                    const borderColor = isCurrentStudent ? 'border-amber-500' : student.gender === 'Nữ' ? 'border-pink-100' : 'border-blue-100';
                     const topBar = student.gender === 'Nữ' ? 'bg-gradient-to-r from-pink-300 to-pink-400' : 'bg-gradient-to-r from-blue-300 to-blue-400';
                     const dotColor = student.gender === 'Nữ' ? 'bg-pink-400' : 'bg-blue-400';
                     const hoverClass = student.gender === 'Nữ' ? 'hover:border-pink-300 hover:shadow-[0_8px_20px_rgba(244,114,182,0.15)]' : 'hover:border-blue-300 hover:shadow-[0_8px_20px_rgba(59,130,246,0.15)]';
 
                     return `
-                        <button type="button" class="h-24 w-full bg-white border ${borderColor} rounded-2xl shadow-sm ${hoverClass} relative group ${canManageSeating ? 'cursor-pointer' : 'cursor-default'} flex flex-col items-center justify-center transition-all duration-300 transform hover:-translate-y-1 overflow-hidden" onclick="openSeatStudentDetails('${seatId}')">
+                        <button type="button" class="h-24 w-full ${isCurrentStudent ? 'bg-amber-50 border-amber-500 ring-4 ring-amber-300 shadow-lg shadow-amber-200/70 scale-[1.03]' : 'bg-white ' + borderColor + ' shadow-sm ' + hoverClass} border rounded-2xl relative group ${canManageSeating ? 'cursor-pointer' : 'cursor-default'} flex flex-col items-center justify-center transition-all duration-300 transform hover:-translate-y-1 overflow-hidden" onclick="openSeatStudentDetails('${seatId}')">
                             <div class="absolute top-0 left-0 w-full h-1.5 ${topBar} opacity-80"></div>
+                            ${isCurrentStudent ? '<span class="absolute right-1 top-2 rounded-full bg-amber-500 px-2 py-1 text-[8px] font-black uppercase tracking-wide text-white shadow">Chỗ của bạn</span>' : ''}
                             ${getAvatarImg(student.avatarUrl, getStudentDisplayName(student), "w-10 h-10 mt-1 mb-1.5 pointer-events-none ring-2 ring-slate-50 shadow-sm")}
                             <div class="flex items-center gap-1.5 pointer-events-none px-2 w-full justify-center">
-                                <span class="w-1.5 h-1.5 rounded-full ${dotColor}"></span>
-                                <span class="text-[10px] font-bold text-slate-700 text-center truncate">${getStudentDisplayName(student)}</span>
+                                <span class="w-1.5 h-1.5 rounded-full ${isCurrentStudent ? 'bg-amber-600' : dotColor}"></span>
+                                <span class="text-[10px] font-bold ${isCurrentStudent ? 'text-amber-950' : 'text-slate-700'} text-center truncate">${getStudentDisplayName(student)}</span>
                             </div>
                         </button>
                     `;
@@ -7639,7 +7942,7 @@ window.parseExcelToDailySchedule = function(rows) {
                             <!-- Bục giảng siêu thực -->
                             <div class="relative w-full h-36 mb-10 bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-[0_8px_30px_rgba(0,0,0,0.04)] flex-shrink-0 z-10">
                                 <div class="absolute top-0 right-0 w-16 h-full border-l border-slate-100 flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 rounded-r-[2rem] text-slate-400 font-black text-[10px] tracking-widest shadow-inner" style="writing-mode: vertical-rl; transform: rotate(180deg);">CỬA RA VÀO</div>
-                                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-[65%] h-8 bg-gradient-to-r from-teal-900 via-emerald-900 to-teal-900 rounded shadow-inner flex items-center justify-center text-teal-50 text-[10px] font-bold tracking-[0.2em] border-4 border-amber-900/80">BẢNG TỪ XANH</div>
+                                <div class="absolute top-4 left-1/2 -translate-x-1/2 w-[65%] h-8 bg-gradient-to-r from-teal-900 via-emerald-900 to-teal-900 rounded shadow-inner flex items-center justify-center text-teal-50 text-[10px] font-bold tracking-[0.2em] border-4 border-amber-900/80">BẢNG</div>
                                 <div class="absolute bottom-4 left-0 w-[calc(33.33%-12px)] h-16 bg-gradient-to-b from-amber-700 to-amber-800 rounded-r-2xl shadow-lg border-b-4 border-amber-950 flex flex-col items-center justify-center text-white border-t border-r border-amber-600">
                                     <i class="ph-fill ph-chalkboard-teacher text-2xl mb-0.5 text-amber-200 opacity-90"></i>
                                     <span class="text-[9px] font-black uppercase tracking-widest text-amber-100 opacity-90">Bàn Giáo Viên</span>
