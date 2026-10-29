@@ -65,13 +65,30 @@ create table if not exists public.class_reminders (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.timetable_reminders (
+  id uuid primary key default gen_random_uuid(),
+  class_id text not null,
+  day smallint not null check (day between 1 and 6),
+  reminder_date date not null,
+  session text not null check (session in ('Sáng', 'Chiều')),
+  period text not null,
+  time text not null,
+  subject text not null,
+  message text not null check (char_length(message) between 1 and 500),
+  recipient_ids text[] not null check (cardinality(recipient_ids) > 0),
+  created_by uuid references auth.users (id) on delete set null,
+  sender_name text not null,
+  sender_role text not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.attendance_records (
   class_id text not null,
   attendance_date date not null,
   session text not null check (session in ('Sáng', 'Chiều')),
   student_id text not null,
   status text not null check (status in ('present', 'late', 'excused', 'unexcused')),
-  updated_by uuid default auth.uid() references auth.users (id),
+  updated_by uuid default auth.uid() references auth.users (id) on delete set null,
   updated_at timestamptz not null default now(),
   primary key (class_id, attendance_date, session, student_id)
 );
@@ -80,6 +97,10 @@ create index if not exists grades_student_lookup
   on public.grades (class_id, student_id, academic_year, semester);
 create index if not exists class_reminders_recipient_lookup
   on public.class_reminders using gin (recipient_ids);
+create index if not exists timetable_reminders_class_date
+  on public.timetable_reminders (class_id, reminder_date desc);
+create index if not exists timetable_reminders_recipient_lookup
+  on public.timetable_reminders using gin (recipient_ids);
 create unique index if not exists profiles_one_student_account
   on public.profiles (class_id, student_id)
   where role in ('bcs', 'hocsinh');
@@ -186,9 +207,10 @@ alter table public.profiles enable row level security;
 alter table public.class_data enable row level security;
 alter table public.grades enable row level security;
 alter table public.class_reminders enable row level security;
+alter table public.timetable_reminders enable row level security;
 alter table public.attendance_records enable row level security;
-revoke all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.attendance_records from public, anon, authenticated;
-grant all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.attendance_records to service_role;
+revoke all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.timetable_reminders, public.attendance_records from public, anon, authenticated;
+grant all on table public.profiles, public.class_data, public.grades, public.class_reminders, public.timetable_reminders, public.attendance_records to service_role;
 
 drop policy if exists "profiles_read_own_or_teacher" on public.profiles;
 create policy "profiles_read_own_or_teacher"

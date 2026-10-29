@@ -34,8 +34,15 @@ async function handleCreate(config, body, classId) {
   const password = String(body.password || "");
   const role = body.role === "bcs" ? "bcs" : body.role === "hocsinh" ? "hocsinh" : "";
   const studentId = String(body.studentId || "").trim();
+  const studentRole = role === "bcs" ? String(body.studentRole || "") : "";
 
-  if (!/^[a-z0-9._-]{2,64}$/.test(username) || password.length < 6 || !role || !studentId) {
+  if (
+    !/^[a-z0-9._-]{2,64}$/.test(username) ||
+    password.length < 6 ||
+    !role ||
+    !studentId ||
+    (studentRole && !["Lớp trưởng", "Tổ trưởng"].includes(studentRole))
+  ) {
     throw new Error("Tài khoản, mật khẩu từ 6 ký tự, vai trò và học sinh liên kết là bắt buộc.");
   }
 
@@ -70,6 +77,51 @@ async function handleCreate(config, body, classId) {
     });
     const error = await readJson(profileResponse);
     throw supabaseRequestError(profileResponse, error, "Không thể lưu hồ sơ tài khoản.");
+  }
+
+  if (role === "bcs" && studentRole) {
+    const classDataUrl = new URL(`${config.url}/rest/v1/class_data`);
+    classDataUrl.searchParams.set("class_id", `eq.${classId}`);
+    classDataUrl.searchParams.set("select", "state");
+    const classResponse = await fetch(classDataUrl, {
+      headers: supabaseHeaders(config.serviceKey),
+    });
+    const classRows = await readJson(classResponse);
+    const classState = Array.isArray(classRows) && classRows[0] ? classRows[0].state : null;
+    const linkedStudent = classState && Array.isArray(classState.students)
+      ? classState.students.find(student => String(student.id) === studentId)
+      : null;
+    if (!classResponse.ok || !linkedStudent) {
+      await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        headers: supabaseHeaders(config.serviceKey),
+      });
+      throw new Error("Không tìm thấy học sinh liên kết trong dữ liệu lớp.");
+    }
+    if (studentRole === "Tổ trưởng" && !String(linkedStudent.group || "").trim()) {
+      await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        headers: supabaseHeaders(config.serviceKey),
+      });
+      throw new Error("Hãy phân học sinh vào một tổ trước khi cấp tài khoản tổ trưởng.");
+    }
+    linkedStudent.role = studentRole;
+    const updateResponse = await fetch(
+      `${config.url}/rest/v1/class_data?class_id=eq.${encodeURIComponent(classId)}`,
+      {
+        method: "PATCH",
+        headers: supabaseHeaders(config.serviceKey, { Prefer: "return=minimal" }),
+        body: JSON.stringify({ state: classState }),
+      }
+    );
+    if (!updateResponse.ok) {
+      await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        headers: supabaseHeaders(config.serviceKey),
+      });
+      const error = await readJson(updateResponse);
+      throw supabaseRequestError(updateResponse, error, "Không thể lưu vai trò cán bộ lớp.");
+    }
   }
 
   return { id: user.id, username, fullName: String(body.fullName || username).trim(), role, studentId };
@@ -169,6 +221,17 @@ module.exports = async function handler(request, response) {
     }
 
     if (action === "delete") {
+      const attendanceUrl = new URL(`${url}/rest/v1/attendance_records`);
+      attendanceUrl.searchParams.set("updated_by", `eq.${encodeURIComponent(userId)}`);
+      const attendanceResponse = await fetch(attendanceUrl, {
+        method: "PATCH",
+        headers: supabaseHeaders(serviceKey, { Prefer: "return=minimal" }),
+        body: JSON.stringify({ updated_by: null }),
+      });
+      if (!attendanceResponse.ok) {
+        const result = await readJson(attendanceResponse);
+        throw supabaseRequestError(attendanceResponse, result, "Không thể gỡ liên kết điểm danh của tài khoản.");
+      }
       const deleteResponse = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
         method: "DELETE",
         headers: supabaseHeaders(serviceKey),

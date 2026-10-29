@@ -86,6 +86,30 @@
     return result;
   };
 
+  window.cloudTimetableReminderRequest = async function (payload, method = "GET") {
+    const client = await window.cloudReady;
+    const { data } = await client.auth.getSession();
+    const token = data.session && data.session.access_token;
+    if (!token) throw new Error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+    const response = await fetch("/api/timetable-reminders", {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: method === "GET" ? undefined : JSON.stringify(payload || {}),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (result && result.error) throw new Error(result.error);
+      if (response.status === 404 || response.status === 405) {
+        throw new Error("Không tìm thấy API lời nhắc thời khóa biểu. Hãy triển khai ứng dụng trên Vercel.");
+      }
+      throw new Error(`Không thể xử lý lời nhắc thời khóa biểu (HTTP ${response.status}).`);
+    }
+    if (!result || typeof result !== "object") {
+      throw new Error("API lời nhắc thời khóa biểu trả về dữ liệu không hợp lệ.");
+    }
+    return result;
+  };
+
   window.loadCloudClass = async function (legacyState, replaceExisting = false) {
     const client = await window.cloudReady;
     const { data: sessionData } = await client.auth.getSession();

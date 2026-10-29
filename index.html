@@ -334,7 +334,20 @@
         function getBcsLinkedStudent() {
             if (!state.auth || state.auth.role !== 'bcs') return null;
             const account = (state.users || []).find(user => String(user.id) === String(state.auth.userId));
-            return account ? state.students.find(student => String(student.id) === String(account.studentId)) || null : null;
+            const studentId = account && account.studentId || state.auth.studentId;
+            return (state.students || []).find(student => String(student.id) === String(studentId)) || null;
+        }
+
+        function getAttendanceStatusForDate(date, studentId) {
+            const statuses = Object.entries(state.attendanceRecords || {})
+                .filter(([recordKey]) => recordKey.startsWith(`${date}_`))
+                .map(([, records]) => records && records[studentId])
+                .filter(status => ['present', 'late', 'excused', 'unexcused'].includes(status));
+            if (statuses.includes('unexcused')) return 'unexcused';
+            if (statuses.includes('excused')) return 'excused';
+            if (statuses.includes('late')) return 'late';
+            if (statuses.includes('present')) return 'present';
+            return null;
         }
 
         function isAttendanceLeader() {
@@ -381,6 +394,13 @@
                 );
             }
             return [];
+        }
+
+        function canSendTimetableReminder() {
+            return Boolean(state.auth && (
+                state.auth.role === 'gvcn' ||
+                (state.auth.role === 'bcs' && getReminderEligibleStudents().length > 0)
+            ));
         }
 
         function renderClassReminders() {
@@ -718,10 +738,18 @@
                 .maybeSingle();
             if (error) throw error;
             window.timetableReminderSyncErrorShown = false;
+            const previousReminders = JSON.stringify({
+                class: state.timetableReminders || {},
+                api: state.apiTimetableReminders || [],
+            });
             const reminders = data && data.state && data.state.timetableReminders;
             const nextReminders = reminders && typeof reminders === 'object' && !Array.isArray(reminders) ? reminders : {};
-            const changed = JSON.stringify(nextReminders) !== JSON.stringify(state.timetableReminders || {});
             state.timetableReminders = nextReminders;
+            await window.loadTimetableReminders();
+            const changed = previousReminders !== JSON.stringify({
+                class: state.timetableReminders || {},
+                api: state.apiTimetableReminders || [],
+            });
             if (changed) {
                 if (state.currentTab === 'thoi-khoa-bieu') renderLayout();
                 else updateClassReminderNotificationControl();
@@ -1126,8 +1154,10 @@ function renderHeader() {
     let roleDesc = state.admin.role;
     let headerAvatarUrl = state.admin.avatarUrl;
     if (state.auth && state.auth.role === 'bcs') {
+        const student = getBcsLinkedStudent();
         roleName = 'Cán bộ lớp';
         roleDesc = 'Ban cán sự lớp';
+        headerAvatarUrl = student && student.avatarUrl || '';
     } else if (state.auth && state.auth.role === 'hocsinh') {
         const student = state.students.find(item => String(item.id) === String(state.auth.studentId));
         roleName = student ? getStudentDisplayName(student) : state.auth.fullName || 'Học sinh';
@@ -1409,8 +1439,6 @@ function renderHorizontalNav() {
         : '';
     const weekTopic = state.theme.weekTopics && state.theme.weekTopics[weekStart] || legacyTopic;
     const canEditHome = !!(state.auth && state.auth.role === 'gvcn');
-    const todayRecord = state.attendanceRecords[todayStr] || {};
-    
     const totalStudents = state.students.length;
     let absentCount = 0;
     let lateCount = 0;
@@ -1420,7 +1448,7 @@ function renderHorizontalNav() {
 
     state.students.forEach(s => {
         // Điểm danh hôm nay
-        const status = todayRecord[s.id];
+        const status = getAttendanceStatusForDate(todayStr, s.id);
         if (status === 'excused' || status === 'unexcused') {
             absentCount++;
             attentionStudents.add(s.id); // Vắng mặt cần chú ý
@@ -2970,10 +2998,10 @@ window.executePointsSubmission = function() {
                     const dateCells = allDates.map(d => {
                         const status = state.attendanceRecords[d][s.id]; 
                         let cellContent = '';
-                        if (status === 'present') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center font-bold text-xs"><i class="ph-bold ph-check"></i></div>'; presentCount++; }
-                        else if (status === 'late') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-yellow-50 text-yellow-500 flex items-center justify-center font-bold text-xs"><i class="ph-bold ph-clock"></i></div>'; presentCount++; }
-                        else if (status === 'excused') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-blue-50 text-blue-500 flex items-center justify-center font-bold text-xs">P</div>'; absentCount++; }
-                        else if (status === 'unexcused') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-red-50 text-red-500 flex items-center justify-center font-bold text-xs">KP</div>'; absentCount++; }
+                        if (status === 'present') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300 flex items-center justify-center font-black text-xs"><i class="ph-bold ph-check"></i></div>'; presentCount++; }
+                        else if (status === 'late') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-amber-100 text-amber-900 ring-1 ring-amber-300 flex items-center justify-center font-black text-xs"><i class="ph-bold ph-clock"></i></div>'; presentCount++; }
+                        else if (status === 'excused') { cellContent = '<div title="Vắng có phép" class="w-8 h-8 mx-auto rounded-full bg-blue-200 text-blue-950 ring-2 ring-blue-400 flex items-center justify-center font-black text-xs">P</div>'; absentCount++; }
+                        else if (status === 'unexcused') { cellContent = '<div title="Vắng không phép" class="w-8 h-8 mx-auto rounded-full bg-red-200 text-red-950 ring-2 ring-red-500 flex items-center justify-center font-black text-xs">KP</div>'; absentCount++; }
                         else { cellContent = '<div class="w-8 h-8 mx-auto text-slate-200 flex items-center justify-center">-</div>'; }
                         
                         return `<td class="p-2 text-center border-l border-slate-100">${cellContent}</td>`;
@@ -2982,7 +3010,7 @@ window.executePointsSubmission = function() {
                         <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors ${index % 2 !== 0 ? 'bg-slate-50/30' : 'bg-white'}">
                             <td class="p-4 text-center font-bold text-slate-400 text-xs">${index + 1}</td>
                             <td class="p-4 font-bold text-slate-800 whitespace-nowrap text-sm border-l border-slate-100">${studentName}</td>
-                            <td class="p-4 text-center border-l border-slate-100 font-bold text-sm bg-orange-50/30"><span class="text-emerald-600">${presentCount}</span><span class="text-slate-300 mx-1.5">/</span><span class="text-red-500">${absentCount}</span></td>
+                            <td class="p-4 text-center border-l border-slate-100 font-black text-sm bg-orange-50/30"><span class="text-emerald-800">${presentCount}</span><span class="text-slate-400 mx-1.5">/</span><span class="${absentCount ? 'rounded-md bg-red-100 px-2 py-1 text-red-900 ring-1 ring-red-300' : 'text-red-700'}">${absentCount}</span></td>
                             ${dateCells}
                         </tr>
                     `;
@@ -3823,15 +3851,12 @@ function renderViewBaoCao() {
         });
         return { student, week, month, pointsAddedThisMonth, pointsDeductedThisMonth };
     });
-    let present = 0, absent = 0, late = 0, excused = 0, unexcused = 0;
-    
-    const todayRecord = state.attendanceRecords[todayStr] || {};
+    let present = 0, absent = 0;
+
     state.students.forEach(s => {
-        const status = todayRecord[s.id];
-        if (status === 'present') present++;
-        else if (status === 'late') late++;
-        else if (status === 'excused') { absent++; excused++; }
-        else if (status === 'unexcused') { absent++; unexcused++; }
+        const status = getAttendanceStatusForDate(todayStr, s.id);
+        if (status === 'present' || status === 'late') present++;
+        else if (status === 'excused' || status === 'unexcused') absent++;
     });
     
     const tableRowsHtml = sortedStudents.map((s, index) => `
@@ -6508,13 +6533,35 @@ window.playBellSound = function(idx = 0) {
         }
 
         function getTimetableReminderEntries() {
-            return Object.entries(state.timetableReminders || {}).flatMap(([weekStart, entries]) =>
+            const localEntries = Object.entries(state.timetableReminders || {}).flatMap(([weekStart, entries]) =>
                 (Array.isArray(entries) ? entries : []).map(entry => ({
                     ...entry,
                     date: getTimetableReminderDate(weekStart, entry),
                 }))
-            ).filter(isTimetableReminderForCurrentUser);
+            );
+            return [...localEntries, ...(state.apiTimetableReminders || [])]
+                .filter(isTimetableReminderForCurrentUser);
         }
+
+        window.loadTimetableReminders = async function() {
+            if (!state.auth || !state.auth.loggedIn || !state.cloudProfile) return;
+            const result = await window.cloudTimetableReminderRequest(null, 'GET');
+            state.apiTimetableReminders = (result.reminders || []).map(reminder => ({
+                id: String(reminder.id),
+                day: Number(reminder.day),
+                date: String(reminder.reminder_date || ''),
+                session: reminder.session,
+                period: reminder.period,
+                time: reminder.time,
+                subject: reminder.subject,
+                message: reminder.message,
+                recipientIds: Array.isArray(reminder.recipient_ids) ? reminder.recipient_ids.map(String) : [],
+                createdAt: reminder.created_at,
+                senderName: reminder.sender_name,
+                senderRole: reminder.sender_role,
+                storage: 'server',
+            }));
+        };
 
         function isTimetableReminderForCurrentUser(reminder) {
             if (state.auth && state.auth.role === 'gvcn') return true;
@@ -6596,6 +6643,24 @@ window.playBellSound = function(idx = 0) {
             showToast('Đã công bố thời khóa biểu và lưu vào lịch sử.', 'success');
         };
 
+        window.deleteTimetableHistory = function() {
+            if (!state.auth || state.auth.role !== 'gvcn') {
+                showToast('Chỉ GVCN mới được xóa thời khóa biểu đã công bố.', 'error');
+                return;
+            }
+            const publishedEntry = getSelectedPublishedTimetableHistory();
+            if (!publishedEntry) {
+                showToast('Hãy chọn một thời khóa biểu đã công bố cần xóa.', 'error');
+                return;
+            }
+            if (!confirm('Xóa vĩnh viễn phiên bản thời khóa biểu đã công bố này?')) return;
+            state.timetableHistory = (state.timetableHistory || []).filter(entry => entry.id !== publishedEntry.id);
+            state.selectedTimetableHistoryId = '';
+            saveData();
+            renderLayout();
+            showToast('Đã xóa thời khóa biểu khỏi lịch sử công bố.', 'success');
+        };
+
         window.editTimetableHistoryAsDraft = function() {
             if (!state.auth || state.auth.role !== 'gvcn') {
                 showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
@@ -6666,7 +6731,7 @@ window.playBellSound = function(idx = 0) {
                     ${days.map((_, dayIndex) => {
                         const entry = dayRows[dayIndex][rowIndex] || {};
                         const reminderDate = getTimetableDateForDay(reminderWeek, dayIndex + 1);
-                        const slotReminders = ((state.timetableReminders || {})[reminderWeek] || []).filter(reminder =>
+                        const slotReminders = getTimetableReminderEntries().filter(reminder =>
                             Number(reminder.day) === dayIndex + 1 &&
                             reminder.session === session &&
                             reminder.period === (entry.period || rowTemplate[rowIndex].period) &&
@@ -6825,11 +6890,12 @@ window.playBellSound = function(idx = 0) {
             const currentWeek = getTimetableWeekStart(new Date());
             const reminderWeek = getTimetableWeekStart(state.timetableReminderWeek || currentWeek);
             state.timetableReminderWeek = reminderWeek;
-            const availableReminderWeeks = [...new Set([currentWeek, reminderWeek, ...Object.keys(state.timetableReminders || {})])].sort().reverse();
+            const apiReminderWeeks = (state.apiTimetableReminders || []).map(reminder => getTimetableWeekStart(reminder.date));
+            const availableReminderWeeks = [...new Set([currentWeek, reminderWeek, ...Object.keys(state.timetableReminders || {}), ...apiReminderWeeks])].sort().reverse();
             const reminderWeekOptions = availableReminderWeeks.map(week => `<option value="${week}" ${week === reminderWeek ? 'selected' : ''}>Tuần từ ${formatTimetableDate(week)}</option>`).join('');
             const dayNames = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
-            const weeklyReminders = [...((state.timetableReminders || {})[reminderWeek] || [])]
-                .filter(isTimetableReminderForCurrentUser)
+            const weeklyReminders = getTimetableReminderEntries()
+                .filter(reminder => getTimetableWeekStart(reminder.date) === reminderWeek)
                 .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
             const weeklyRemindersHtml = weeklyReminders.length
                 ? weeklyReminders.map(entry => {
@@ -6849,17 +6915,16 @@ window.playBellSound = function(idx = 0) {
                             <div>${escapeTimetableText(formatTimetableDate(getTimetableReminderDate(reminderWeek, entry)))}</div>
                             <div>${escapeTimetableText(entry.time || '--:--')}</div>
                             ${createdAtLabel ? `<div class="mt-1 border-t border-amber-200 pt-1 text-slate-500">Đã nhắc<br>${escapeTimetableText(createdAtLabel)}</div>` : ''}
-                            ${canEdit ? `<div class="mt-2 flex flex-wrap justify-end gap-1"><button type="button" onclick="editTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm hover:bg-amber-100">Sửa</button><button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-rose-700 shadow-sm hover:bg-rose-50">Xóa</button></div>` : ''}
+                            ${canEdit ? `<div class="mt-2 flex flex-wrap justify-end gap-1">${entry.storage === 'server' ? '' : `<button type="button" onclick="editTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm hover:bg-amber-100">Sửa</button>`}<button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-rose-700 shadow-sm hover:bg-rose-50">Xóa</button></div>` : ''}
                         </div>
                     </article>
                 `}).join('')
                 : `<div class="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-center text-xs font-semibold text-slate-500">${canEdit ? 'Bấm “Thêm lời nhắc” ở ô môn học để mở khung nhập lớn. Nhấn Enter để lưu, Shift+Enter để xuống dòng.' : 'Tuần này chưa có lời nhắc nào.'}</div>`;
             const historyOptions = state.timetableHistory.filter(entry => entry.published === true).slice().reverse().map(entry => {
-                const changedAt = new Date(entry.changedAt).toLocaleString('vi-VN');
                 const effectiveDate = entry.effectiveDate
                     ? new Date(`${entry.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN')
                     : 'chưa đặt';
-                return `<option value="${escapeTimetableText(entry.id)}" ${selectedHistory && selectedHistory.id === entry.id ? 'selected' : ''}>Công bố ${escapeTimetableText(changedAt)} — Áp dụng từ ${escapeTimetableText(effectiveDate)}</option>`;
+                return `<option value="${escapeTimetableText(entry.id)}" ${selectedHistory && selectedHistory.id === entry.id ? 'selected' : ''}>Áp dụng từ ${escapeTimetableText(effectiveDate)}</option>`;
             }).join('');
             return `
                 <div class="max-w-7xl mx-auto animate-fade-in pb-12 pt-2">
@@ -6879,6 +6944,7 @@ window.playBellSound = function(idx = 0) {
                                     <button onclick="downloadTimetablePdf()" class="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-800"><i class="ph-bold ph-download-simple"></i> Tải TKB PDF</button>
                                     ${canEdit ? `<button type="button" onclick="publishTimetable()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-rose-700"><i class="ph-bold ph-megaphone"></i> Xác nhận công khai</button>` : ''}
                                     ${selectedHistory && state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="editTimetableHistoryAsDraft()" class="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-amber-700"><i class="ph-bold ph-pencil-simple"></i> Sửa bản này</button>` : ''}
+                                    ${selectedHistory && state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="deleteTimetableHistory()" class="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-red-800"><i class="ph-bold ph-trash"></i> Xóa bản này</button>` : ''}
                                     ${canEdit ? `<label class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"><i class="ph-bold ph-upload-simple"></i> Tải file TKB<input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleTimetableExcelUpload(event)"></label>` : ''}
                                 </div>
                             </div>
@@ -6891,7 +6957,7 @@ window.playBellSound = function(idx = 0) {
                                     <option value="">Thời khóa biểu hiện tại</option>
                                     ${historyOptions}
                                 </select>
-                                ${selectedHistory ? `<p class="mt-2 text-center text-xs font-bold text-amber-700">Đang xem bản công bố lúc ${escapeTimetableText(new Date(selectedHistory.publishedAt || selectedHistory.changedAt).toLocaleString('vi-VN'))}, áp dụng từ ${escapeTimetableText(selectedHistory.effectiveDate ? new Date(`${selectedHistory.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN') : 'chưa đặt')}. GVCN có thể chọn “Sửa bản này” để chép thành bản nháp mới; bản lịch sử gốc không thay đổi.</p>` : `<p class="mt-2 text-center text-xs font-semibold text-slate-500">Các lần chỉnh sửa chỉ lưu bản nháp; nhấn “Công bố TKB” để lưu phiên bản vào lịch sử. Công bố không khóa quyền sửa thời khóa biểu hiện tại.</p>`}
+                                ${selectedHistory ? `<p class="mt-2 text-center text-xs font-bold text-amber-700">Bản TKB này áp dụng từ ${escapeTimetableText(selectedHistory.effectiveDate ? new Date(`${selectedHistory.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN') : 'chưa đặt')}. GVCN có thể sửa bản nháp hoặc xóa phiên bản đã công bố.</p>` : `<p class="mt-2 text-center text-xs font-semibold text-slate-500">Các lần chỉnh sửa chỉ lưu bản nháp; nhấn “Công bố TKB” để lưu phiên bản vào lịch sử. Công bố không khóa quyền sửa thời khóa biểu hiện tại.</p>`}
                             </div>
                         </div>
                         <div class="relative z-10 mt-6 space-y-5">
@@ -6957,8 +7023,8 @@ window.playBellSound = function(idx = 0) {
         }
 
         window.addTimetableReminder = async function(day, session, rowIndex, input, date, recipientIds) {
-            if (!state.auth || state.auth.role !== 'gvcn') {
-                showToast('Chỉ GVCN mới được thêm lời nhắc thời khóa biểu.', 'error');
+            if (!canSendTimetableReminder()) {
+                showToast('Chỉ GVCN, lớp trưởng hoặc tổ trưởng mới được gửi lời nhắc thời khóa biểu.', 'error');
                 return false;
             }
             if (getSelectedPublishedTimetableHistory()) {
@@ -6985,6 +7051,11 @@ window.playBellSound = function(idx = 0) {
                 showToast('Chọn ít nhất một người nhận lời nhắc.', 'error');
                 return false;
             }
+            const allowedRecipientIds = new Set(getReminderEligibleStudents().map(student => String(student.id)));
+            if (selectedRecipientIds.some(id => !allowedRecipientIds.has(id))) {
+                showToast('Người nhận nằm ngoài phạm vi được phân công.', 'error');
+                return false;
+            }
 
             const reminderDate = String(date || getTimetableDateForDay(state.timetableReminderWeek || getTimetableWeekStart(new Date()), day));
             const parsedDate = new Date(`${reminderDate}T00:00:00`);
@@ -6997,11 +7068,8 @@ window.playBellSound = function(idx = 0) {
             }
             const weekStart = getTimetableWeekStart(reminderDate);
             state.timetableReminderWeek = weekStart;
-            if (!state.timetableReminders) state.timetableReminders = {};
-            if (!Array.isArray(state.timetableReminders[weekStart])) state.timetableReminders[weekStart] = [];
-            const previousReminders = [...state.timetableReminders[weekStart]];
-            state.timetableReminders[weekStart].push({
-                id: `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+            let previousReminders = null;
+            const reminder = {
                 day,
                 date: reminderDate,
                 session,
@@ -7011,13 +7079,34 @@ window.playBellSound = function(idx = 0) {
                 message,
                 recipientIds: selectedRecipientIds,
                 createdAt: new Date().toISOString()
-            });
+            };
             try {
-                await window.saveDataAndSyncCloud();
+                if (state.auth.role === 'bcs') {
+                    const result = await window.cloudTimetableReminderRequest({
+                        ...reminder,
+                        recipientIds: selectedRecipientIds,
+                    }, 'POST');
+                    if (!result.reminder) throw new Error('Máy chủ chưa xác nhận đã lưu lời nhắc.');
+                    reminder.id = String(result.reminder.id);
+                    reminder.createdAt = result.reminder.created_at;
+                    reminder.senderName = result.reminder.sender_name;
+                    reminder.senderRole = result.reminder.sender_role;
+                    reminder.storage = 'server';
+                    state.apiTimetableReminders = [...(state.apiTimetableReminders || []), reminder];
+                } else {
+                    if (!state.timetableReminders) state.timetableReminders = {};
+                    if (!Array.isArray(state.timetableReminders[weekStart])) state.timetableReminders[weekStart] = [];
+                    previousReminders = [...state.timetableReminders[weekStart]];
+                    reminder.id = `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+                    state.timetableReminders[weekStart].push(reminder);
+                    await window.saveDataAndSyncCloud();
+                }
             } catch (error) {
-                state.timetableReminders[weekStart] = previousReminders;
-                if (!previousReminders.length) delete state.timetableReminders[weekStart];
-                saveData();
+                if (previousReminders) {
+                    state.timetableReminders[weekStart] = previousReminders;
+                    if (!previousReminders.length) delete state.timetableReminders[weekStart];
+                    saveData();
+                }
                 console.error('Không thể đồng bộ lời nhắc thời khóa biểu:', error);
                 showToast(error.message || 'Không thể lưu lời nhắc thời khóa biểu vào database.', 'error');
                 return false;
@@ -7030,6 +7119,10 @@ window.playBellSound = function(idx = 0) {
         window.editTimetableReminder = async function(week, reminderId) {
             if (!state.auth || state.auth.role !== 'gvcn' || getSelectedPublishedTimetableHistory()) {
                 showToast('Chỉ GVCN mới được sửa lời nhắc của thời khóa biểu hiện tại.', 'error');
+                return;
+            }
+            if ((state.apiTimetableReminders || []).some(item => String(item.id) === String(reminderId))) {
+                showToast('Lời nhắc do cán bộ lớp gửi không thể sửa trực tiếp.', 'error');
                 return;
             }
             const reminders = (state.timetableReminders || {})[week] || [];
@@ -7065,6 +7158,19 @@ window.playBellSound = function(idx = 0) {
                 showToast('Chỉ GVCN mới được xóa lời nhắc của thời khóa biểu hiện tại.', 'error');
                 return;
             }
+            if ((state.apiTimetableReminders || []).some(item => String(item.id) === String(reminderId))) {
+                if (!confirm('Bạn có chắc muốn xóa lời nhắc thời khóa biểu này?')) return;
+                try {
+                    await window.cloudTimetableReminderRequest({ id: reminderId }, 'DELETE');
+                    state.apiTimetableReminders = state.apiTimetableReminders.filter(item => String(item.id) !== String(reminderId));
+                    renderLayout();
+                    showToast('Đã xóa lời nhắc thời khóa biểu.', 'success');
+                } catch (error) {
+                    console.error('Không thể xóa lời nhắc thời khóa biểu:', error);
+                    showToast(error.message || 'Không thể xóa lời nhắc thời khóa biểu.', 'error');
+                }
+                return;
+            }
             const reminders = (state.timetableReminders || {})[week];
             const reminderIndex = Array.isArray(reminders)
                 ? reminders.findIndex(item => String(item.id) === String(reminderId))
@@ -7098,7 +7204,8 @@ window.playBellSound = function(idx = 0) {
             if (!subject) return showToast('Chưa có môn học ở tiết này.', 'error');
             const period = String(periodValue || slot && slot.period || `Tiết ${rowIndex + 1}`);
             const time = String(timeValue || slot && slot.time || '--:--');
-            const canManage = state.auth.role === 'gvcn' && !getSelectedPublishedTimetableHistory();
+            const canSend = canSendTimetableReminder() && !getSelectedPublishedTimetableHistory();
+            const canDelete = state.auth.role === 'gvcn' && !getSelectedPublishedTimetableHistory();
             const weekStart = getTimetableWeekStart(weekValue || state.timetableReminderWeek || new Date());
             const reminderDate = getTimetableDateForDay(weekStart, day);
             const reminders = getTimetableReminderEntries().filter(reminder =>
@@ -7106,8 +7213,9 @@ window.playBellSound = function(idx = 0) {
                 reminder.session === session &&
                 reminder.period === period
             );
-            const timetableReminderGroups = [...new Set((state.students || []).map(student => String(student.group || '').trim()).filter(Boolean))];
-            const timetableReminderRecipients = (state.students || []).map(student => `
+            const eligibleStudents = getReminderEligibleStudents();
+            const timetableReminderGroups = [...new Set(eligibleStudents.map(student => String(student.group || '').trim()).filter(Boolean))];
+            const timetableReminderRecipients = eligibleStudents.map(student => `
                 <label data-timetable-recipient-group="${escapeHtmlAttr(student.group || '')}" class="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700">
                     <input type="checkbox" data-timetable-recipient value="${escapeHtmlAttr(student.id)}" checked onchange="updateTimetableReminderAllState()" class="h-4 w-4 accent-amber-600">
                     <span>${getStudentDisplayName(student)}<span class="ml-1 font-medium text-slate-400">${escapeHtmlText(student.group || '')}</span></span>
@@ -7124,7 +7232,7 @@ window.playBellSound = function(idx = 0) {
                             ${createdAtLabel ? `<span>Đã nhắc ${escapeTimetableText(createdAtLabel)}</span>` : ''}
                         </div>
                         <p class="mt-2 whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-slate-800">${escapeTimetableText(reminder.message || '')}</p>
-                        ${canManage ? `<div class="mt-3 flex justify-end"><button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(weekStart)}','${escapeInlineJs(reminder.id)}')" class="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-black text-rose-700 shadow-sm hover:bg-rose-50"><i class="ph-bold ph-trash"></i>Xóa lời nhắc</button></div>` : ''}
+                        ${canDelete ? `<div class="mt-3 flex justify-end"><button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(weekStart)}','${escapeInlineJs(reminder.id)}')" class="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-black text-rose-700 shadow-sm hover:bg-rose-50"><i class="ph-bold ph-trash"></i>Xóa lời nhắc</button></div>` : ''}
                     </article>`;
                 }).join('')
                 : `<div class="rounded-xl border border-dashed border-slate-300 p-5 text-center text-sm font-medium text-slate-500">Chưa có lời nhắc cho tiết này vào ngày đã chọn.</div>`;
@@ -7141,7 +7249,7 @@ window.playBellSound = function(idx = 0) {
                             <button type="button" onclick="closeModal('timetable-reminder-modal')" aria-label="Đóng" class="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-100"><i class="ph-bold ph-x text-lg"></i></button>
                         </header>
                         <div class="space-y-3 overflow-y-auto p-5 md:p-6">
-                            ${canManage ? `<label class="block text-sm font-black text-slate-800">Ngày áp dụng
+                            ${canSend ? `<label class="block text-sm font-black text-slate-800">Ngày áp dụng
                                 <input id="timetable-reminder-date" type="date" value="${escapeTimetableText(reminderDate)}" class="mt-2 block w-full rounded-xl border border-amber-300 bg-white px-4 py-3 font-bold text-slate-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-100">
                             </label>
                             <div class="space-y-2 rounded-2xl border border-amber-100 bg-white p-3">
@@ -7151,7 +7259,7 @@ window.playBellSound = function(idx = 0) {
                                         ${timetableReminderGroups.map(group => `<option value="${escapeHtmlAttr(group)}">${escapeHtmlText(group)}</option>`).join('')}
                                     </select>
                                 </label>
-                                <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-black text-amber-900"><input id="timetable-reminder-all" type="checkbox" checked onchange="toggleTimetableReminderRecipients(this.checked)" class="h-4 w-4 accent-amber-600">Chọn tất cả thành viên</label>
+                                <label class="flex cursor-pointer items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-black text-amber-900"><input id="timetable-reminder-all" type="checkbox" checked onchange="toggleTimetableReminderRecipients(this.checked)" class="h-4 w-4 accent-amber-600">${state.auth.role === 'bcs' && !String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi').includes('lớp trưởng') ? 'Chọn cả tổ' : 'Chọn cả lớp'}</label>
                                 <div class="grid max-h-36 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">${timetableReminderRecipients || '<p class="text-xs font-semibold text-amber-700">Chưa có học sinh để chọn.</p>'}</div>
                             </div>
                             <label for="timetable-reminder-message" class="block text-sm font-black text-slate-800">Nội dung lời nhắc</label>
@@ -7162,7 +7270,7 @@ window.playBellSound = function(idx = 0) {
                         </div>
                         <footer class="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 p-4">
                             <button type="button" onclick="closeModal('timetable-reminder-modal')" class="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-100">Đóng</button>
-                            ${canManage ? `<button type="button" onclick="saveTimetableReminderFromModal(${day},'${session}',${rowIndex})" class="rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white shadow-sm hover:bg-amber-700"><i class="ph-bold ph-paper-plane-tilt mr-1"></i> Lưu lời nhắc</button>` : ''}
+                            ${canSend ? `<button type="button" onclick="saveTimetableReminderFromModal(${day},'${session}',${rowIndex})" class="rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-black text-white shadow-sm hover:bg-amber-700"><i class="ph-bold ph-paper-plane-tilt mr-1"></i> Gửi lời nhắc</button>` : ''}
                         </footer>
                     </section>
                 </div>
@@ -8710,6 +8818,13 @@ window.parseExcelToDailySchedule = function(rows) {
                     console.error('Không thể tải lời nhắc:', reminderError);
                     showToast(reminderError.message || 'Lời nhắc chưa sẵn sàng. Hãy kiểm tra quyền truy cập database.', 'error');
                 }
+                try {
+                    await window.loadTimetableReminders();
+                    window.notifyNewTimetableReminders();
+                } catch (reminderError) {
+                    console.error('Không thể tải lời nhắc thời khóa biểu:', reminderError);
+                    showToast(reminderError.message || 'Lời nhắc thời khóa biểu chưa sẵn sàng.', 'error');
+                }
                 state.currentTab = 'tong-quan';
                 state.gradeRows = [];
                 renderLayout();
@@ -8814,7 +8929,10 @@ window.parseExcelToDailySchedule = function(rows) {
                     password: password.trim(),
                     role,
                     fullName: linkedStudent.name,
-                    studentId: linkedStudent.id
+                    studentId: linkedStudent.id,
+                    studentRole: role === 'bcs'
+                        ? accountType === 'bcs-lop-truong' ? 'Lớp trưởng' : 'Tổ trưởng'
+                        : ''
                 });
                 state.users = [...(state.users || []), {
                     id: result.account.id,
@@ -8857,6 +8975,11 @@ window.parseExcelToDailySchedule = function(rows) {
             try {
                 await window.cloudAccountRequest({ action: 'delete', userId });
                 state.users = (state.users || []).filter(item => item.id !== userId);
+                const linkedStudent = state.students.find(student => String(student.id) === String(user.studentId));
+                if (user.role === 'bcs' && linkedStudent && /lớp trưởng|tổ trưởng/iu.test(String(linkedStudent.role || ''))) {
+                    linkedStudent.role = 'Thành viên';
+                    saveData();
+                }
                 renderLayout();
                 showToast('Đã xóa tài khoản thành công!', 'success');
             } catch (error) {
@@ -9005,6 +9128,13 @@ window.parseExcelToDailySchedule = function(rows) {
             } catch (reminderError) {
                 console.error('Không thể tải lời nhắc:', reminderError);
                 showToast(reminderError.message || 'Lời nhắc chưa sẵn sàng. Hãy kiểm tra quyền truy cập database.', 'error');
+            }
+            try {
+                await window.loadTimetableReminders();
+                window.notifyNewTimetableReminders();
+            } catch (reminderError) {
+                console.error('Không thể tải lời nhắc thời khóa biểu:', reminderError);
+                showToast(reminderError.message || 'Lời nhắc thời khóa biểu chưa sẵn sàng.', 'error');
             }
             state.currentTab = 'tong-quan';
             renderLayout();
