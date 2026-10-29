@@ -110,6 +110,30 @@
     return result;
   };
 
+  window.cloudStudentPointRequest = async function (payload) {
+    const client = await window.cloudReady;
+    const { data } = await client.auth.getSession();
+    const token = data.session && data.session.access_token;
+    if (!token) throw new Error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+    const response = await fetch("/api/student-points", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload || {}),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (result && result.error) throw new Error(result.error);
+      if (response.status === 404 || response.status === 405) {
+        throw new Error("Không tìm thấy API trừ điểm cán bộ lớp. Hãy triển khai ứng dụng trên Vercel.");
+      }
+      throw new Error(`Không thể lưu điểm (HTTP ${response.status}).`);
+    }
+    if (!result || !result.student) {
+      throw new Error("API trừ điểm trả về dữ liệu không hợp lệ.");
+    }
+    return result;
+  };
+
   window.loadCloudClass = async function (legacyState, replaceExisting = false) {
     const client = await window.cloudReady;
     const { data: sessionData } = await client.auth.getSession();
@@ -261,6 +285,7 @@
     delete persisted.cloudBackupPending;
     delete persisted._legacyBackupPending;
     delete persisted.classReminders;
+    delete persisted.timetableHistoryEdit;
 
     const { error } = await client.from("class_data").upsert(
       { class_id: state.cloudProfile.class_id, state: persisted },

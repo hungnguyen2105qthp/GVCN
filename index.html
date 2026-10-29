@@ -1793,6 +1793,7 @@ function renderHorizontalNav() {
                 <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-md uppercase border border-slate-200">${s.group || 'Chưa nhóm'}</span>
                 <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-md border border-blue-100">${s.role || 'Thành viên'}</span>
             </div>
+            ${isBCS ? `<button type="button" onclick="openBcsDeductionModal('${escapeHtmlAttr(s.id)}')" class="mb-2 w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-xs font-black text-red-700 hover:bg-red-100"><i class="ph-bold ph-minus-circle mr-1"></i> Trừ điểm</button>` : ''}
             <button ${isBGH ? '' : isBCS ? `onclick="showParentView(${s.id})"` : `onclick="openEditStudentModal(${s.id})"`} class="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-xl text-xs flex items-center justify-center gap-2 border border-slate-200 mt-auto ${isBGH ? 'cursor-not-allowed opacity-70' : 'hover:bg-slate-100 transition-colors'}">
                 <i class="ph-bold ${isBGH ? 'ph-eye' : 'ph-identification-card'} text-sm"></i> ${isBGH ? 'CHỈ XEM HỒ SƠ' : 'XEM HỒ SƠ'}
             </button>
@@ -2350,7 +2351,7 @@ function renderStudentSelfStatistics() {
             renderLayout();
         };
 
-      window.executeQuickPoint = function(studentId, points, reason, category, type) {
+      window.executeQuickPoint = async function(studentId, points, reason, category, type) {
     const student = state.students.find(s => String(s.id) === String(studentId));
     if (!student) return;
     if (!state.auth || !['gvcn', 'bcs'].includes(state.auth.role) || !['add', 'subtract'].includes(type) || (state.auth.role === 'bcs' && type !== 'subtract')) {
@@ -2360,6 +2361,26 @@ function renderStudentSelfStatistics() {
     if (!String(reason || '').trim()) return showToast('Vui lòng nhập lý do trước khi ghi điểm.', 'error');
     const amount = Number(points);
     if (!Number.isFinite(amount) || amount <= 0) return showToast('Số điểm không hợp lệ.', 'error');
+
+    if (state.auth.role === 'bcs') {
+        try {
+            const result = await window.cloudStudentPointRequest({
+                studentId: String(student.id),
+                points: amount,
+                reason: String(reason).trim(),
+                category: String(category || 'Kỷ luật'),
+            });
+            Object.assign(student, result.student);
+            saveData();
+        } catch (error) {
+            console.error('Không thể đồng bộ điểm trừ của cán bộ lớp:', error);
+            showToast(error.message || 'Không thể lưu điểm lên dữ liệu lớp.', 'error');
+            return false;
+        }
+        renderLayout();
+        showToast(`Đã trừ ${amount} điểm cho ${getStudentDisplayName(student)}.`, 'error');
+        return true;
+    }
 
     const pointsToApply = type === 'add' ? amount : -amount;
     const actorName = state.auth.fullName || state.auth.username || (state.auth.role === 'bcs' ? 'Ban Cán Sự' : 'GVCN');
@@ -2381,6 +2402,7 @@ function renderStudentSelfStatistics() {
     renderLayout(); 
     showToast(`Đã ${type === 'add' ? 'cộng' : 'trừ'} ${points} điểm cho ${student.name}`, type === 'add' ? 'success' : 'error');
     if (type === 'add' && typeof triggerConfetti === 'function') triggerConfetti();
+    return true;
 };
 
 window.executePointsSubmission = function() {
@@ -2836,7 +2858,24 @@ window.executePointsSubmission = function() {
             if (!state.attendanceRecords) state.attendanceRecords = {};
             if (!state.attendanceTab) state.attendanceTab = 'diem-danh';
             if (typeof window.attendanceTopFilter === 'undefined') window.attendanceTopFilter = 'thang'; // Mặc định xem theo tháng
-            const attendanceStudents = getAttendanceScopeStudents();
+            const attendanceScopeStudents = getAttendanceScopeStudents();
+            const attendanceSearch = String(window.attendanceSearch || '').trim().toLocaleLowerCase('vi');
+            const attendanceGroup = String(window.attendanceGroupFilter || '');
+            const attendanceStudents = attendanceScopeStudents.filter(student =>
+                (!attendanceGroup || String(student.group || '') === attendanceGroup) &&
+                (!attendanceSearch || `${getStudentDisplayName(student)} ${student.code || ''} ${student.group || ''}`.toLocaleLowerCase('vi').includes(attendanceSearch))
+            );
+            const attendanceFiltersHtml = `
+                <div class="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_14rem_auto_auto]">
+                    <input type="search" value="${escapeHtmlAttr(window.attendanceSearch || '')}" oninput="window.attendanceSearch=this.value.trim()" onkeydown="if(event.key==='Enter'){event.preventDefault();renderLayout()}" placeholder="Tìm theo tên hoặc mã học sinh..." aria-label="Tìm học sinh điểm danh" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-400">
+                    <select onchange="window.attendanceGroupFilter=this.value;renderLayout()" aria-label="Lọc học sinh theo tổ" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+                        <option value="">Tất cả tổ trong phạm vi</option>
+                        ${[...new Set(attendanceScopeStudents.map(student => student.group).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'vi')).map(group => `<option value="${escapeHtmlAttr(group)}" ${attendanceGroup === group ? 'selected' : ''}>${escapeHtmlText(group)}</option>`).join('')}
+                    </select>
+                    <div class="self-center text-xs font-bold text-slate-500">Hiển thị ${attendanceStudents.length} / ${attendanceScopeStudents.length}</div>
+                    <button type="button" onclick="renderLayout()" class="rounded-xl bg-indigo-700 px-4 py-3 text-sm font-black text-white hover:bg-indigo-800"><i class="ph-bold ph-funnel mr-1"></i> Lọc</button>
+                </div>
+            `;
             const canManageOthers = isAttendanceLeader();
             
             const recordKey = currentAttendanceDate + '_' + window.currentAttendanceSession;
@@ -2944,6 +2983,7 @@ window.executePointsSubmission = function() {
                             ${canManageOthers ? `<button onclick="markAllPresent()" class="px-5 py-2.5 bg-emerald-500 text-white font-bold rounded-xl shadow-md hover:bg-emerald-600 flex items-center justify-center gap-2 text-sm transition-all flex-shrink-0"><i class="ph-bold ph-check-square-offset text-lg"></i> ${state.auth.role === 'gvcn' || String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi').includes('lớp trưởng') ? 'Cả lớp có mặt' : 'Cả tổ có mặt'}</button>` : ''}
                         </div>
                     </div>
+                    ${attendanceFiltersHtml}
                     <div class="bg-white rounded-[2rem] shadow-sm border border-slate-200 flex flex-col relative z-10">
                         <div class="py-4 border-b border-slate-100 bg-slate-50 px-6 md:px-8 flex-shrink-0 flex justify-between items-center">
                             <div class="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><i class="ph-fill ph-users text-lg"></i> DANH SÁCH - ${formatDateForDisplay(currentAttendanceDate)} (${window.currentAttendanceSession})</div>
@@ -3128,6 +3168,7 @@ window.executePointsSubmission = function() {
                             ${filterButtons}
                         </div>
                     </div>
+                   ${attendanceFiltersHtml}
                    <div class="bg-white rounded-[2rem] shadow-sm border border-slate-200 flex-1 flex flex-col overflow-hidden relative z-10">
                         <div class="py-5 border-b border-slate-100 bg-red-50 px-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <div class="text-sm font-black text-red-600 uppercase tracking-widest flex items-center gap-2"><i class="ph-fill ph-warning-circle text-xl"></i> BẢNG XẾP HẠNG HỌC SINH VẮNG/TRỄ</div>
@@ -3138,6 +3179,7 @@ window.executePointsSubmission = function() {
                                 </button>
                             </div>
                         </div>
+                        ${attendanceFiltersHtml}
                         <div class="overflow-y-auto flex-1 custom-scrollbar p-4">
                             ${topListHtml}
                         </div>
@@ -3797,7 +3839,72 @@ window.executePointsSubmission = function() {
         function switchRankingTab(tab) { rankingTab = tab; renderLayout(); }
 
         function switchReportTab(tab) { state.reportTab = tab; renderLayout(); }
-        
+
+        window.openReportAttendanceDetails = function(statusType) {
+            if (!['present', 'absent'].includes(statusType)) return;
+            const date = window.reportAttendanceDate || new Date().toISOString().slice(0, 10);
+            const isPresent = statusType === 'present';
+            const eligibleStudents = state.students.filter(student => {
+                const status = getAttendanceStatusForDate(date, student.id);
+                return isPresent
+                    ? status === 'present' || status === 'late'
+                    : status === 'excused' || status === 'unexcused';
+            }).sort((a, b) => getStudentDisplayName(a).localeCompare(getStudentDisplayName(b), 'vi'));
+            const groups = [...new Set(eligibleStudents.map(student => String(student.group || '').trim()).filter(Boolean))]
+                .sort((a, b) => a.localeCompare(b, 'vi'));
+            const rows = eligibleStudents.map(student => {
+                const status = getAttendanceStatusForDate(date, student.id);
+                const statusLabel = status === 'present' ? 'Có mặt'
+                    : status === 'late' ? 'Đi muộn'
+                        : status === 'excused' ? 'Vắng có phép'
+                            : 'Vắng không phép';
+                const statusTone = status === 'present' ? 'bg-emerald-100 text-emerald-800'
+                    : status === 'late' ? 'bg-amber-100 text-amber-900'
+                        : status === 'excused' ? 'bg-blue-100 text-blue-900'
+                            : 'bg-red-100 text-red-900';
+                const searchText = `${getStudentDisplayName(student)} ${student.code || ''} ${student.group || ''} ${statusLabel}`.toLocaleLowerCase('vi');
+                return `<div data-report-attendance-row data-search="${escapeHtmlAttr(searchText)}" data-group="${escapeHtmlAttr(student.group || '')}" class="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0">
+                    <div class="min-w-0"><div class="truncate text-sm font-bold text-slate-800">${escapeHtmlText(getStudentDisplayName(student))}</div><div class="mt-0.5 text-xs font-medium text-slate-500">${escapeHtmlText(student.group || 'Chưa phân tổ')}${student.code ? ` · ${escapeHtmlText(student.code)}` : ''}</div></div>
+                    <span class="shrink-0 rounded-full px-3 py-1 text-xs font-black ${statusTone}">${statusLabel}</span>
+                </div>`;
+            }).join('');
+            document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" id="report-attendance-details-modal" onclick="if(event.target===this)closeModal('report-attendance-details-modal')">
+                    <section class="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+                        <header class="flex items-center justify-between gap-3 bg-indigo-950 px-5 py-4 text-white">
+                            <div><h3 class="font-black">${isPresent ? 'Danh sách có mặt' : 'Danh sách vắng'}</h3><p class="mt-1 text-xs font-semibold text-indigo-200">${escapeHtmlText(formatDateForDisplay(date))} · ${eligibleStudents.length} học sinh</p></div>
+                            <button type="button" onclick="closeModal('report-attendance-details-modal')" aria-label="Đóng" class="rounded-full bg-white/10 p-2 hover:bg-white/20"><i class="ph-bold ph-x"></i></button>
+                        </header>
+                        <div class="grid gap-2 border-b border-slate-100 bg-slate-50 p-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                            <input type="search" oninput="filterReportAttendanceDetails(this.value)" placeholder="Tìm tên hoặc mã học sinh..." aria-label="Tìm trong danh sách điểm danh" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-indigo-400">
+                            <select onchange="filterReportAttendanceDetails(document.querySelector('#report-attendance-details-modal input[type=search]').value,this.value)" aria-label="Lọc danh sách điểm danh theo tổ" class="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-700">
+                                <option value="">Tất cả các tổ</option>${groups.map(group => `<option value="${escapeHtmlAttr(group)}">${escapeHtmlText(group)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="report-attendance-detail-count" class="px-5 pt-3 text-xs font-bold text-slate-500">Hiển thị ${eligibleStudents.length} / ${eligibleStudents.length} học sinh</div>
+                        <div id="report-attendance-detail-rows" class="min-h-24 flex-1 overflow-y-auto p-2">${rows || '<p class="p-8 text-center text-sm font-semibold text-slate-400">Không có học sinh trong mục này vào ngày đã chọn.</p>'}</div>
+                        <footer class="flex justify-end border-t border-slate-100 bg-slate-50 p-4"><button type="button" onclick="closeModal('report-attendance-details-modal')" class="rounded-xl bg-slate-800 px-5 py-2.5 text-sm font-bold text-white">Đóng</button></footer>
+                    </section>
+                </div>`;
+        };
+
+        window.filterReportAttendanceDetails = function(query, group) {
+            const rows = [...document.querySelectorAll('#report-attendance-detail-rows [data-report-attendance-row]')];
+            const search = String(query || '').trim().toLocaleLowerCase('vi');
+            const selectedGroup = group === undefined
+                ? document.querySelector('#report-attendance-details-modal select').value
+                : String(group || '');
+            let visible = 0;
+            rows.forEach(row => {
+                const matches = (!search || row.dataset.search.includes(search)) &&
+                    (!selectedGroup || row.dataset.group === selectedGroup);
+                row.classList.toggle('hidden', !matches);
+                if (matches) visible++;
+            });
+            const count = document.getElementById('report-attendance-detail-count');
+            if (count) count.textContent = `Hiển thị ${visible} / ${rows.length} học sinh`;
+        };
+
         function saveStudentComment(id, value) { 
             const s = state.students.find(x => x.id === id); 
             if (s) { s.comment = value; saveData(); showToast("Đã lưu nhận xét tự động!"); } 
@@ -3824,6 +3931,8 @@ function renderViewBaoCao() {
     const d = new Date();
     const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const formattedDate = formatDateForDisplay(todayStr);
+    if (!window.reportAttendanceDate) window.reportAttendanceDate = todayStr;
+    const reportAttendanceDate = window.reportAttendanceDate;
     const weekStartDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const dayOfWeek = weekStartDate.getDay();
     weekStartDate.setDate(weekStartDate.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
@@ -3854,7 +3963,7 @@ function renderViewBaoCao() {
     let present = 0, absent = 0;
 
     state.students.forEach(s => {
-        const status = getAttendanceStatusForDate(todayStr, s.id);
+        const status = getAttendanceStatusForDate(reportAttendanceDate, s.id);
         if (status === 'present' || status === 'late') present++;
         else if (status === 'excused' || status === 'unexcused') absent++;
     });
@@ -4333,8 +4442,8 @@ function renderViewBaoCao() {
                 <button id="btn-export-pdf" onclick="exportToPDF()" class="px-6 py-3.5 bg-[#0f172a] hover:bg-black text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 text-sm print:hidden transition-all"><i class="ph-bold ph-download-simple text-lg"></i> Tải PDF</button>
             </div>
 
-            <div class="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 print:hidden">
-                <input type="search" value="${escapeHtmlAttr(reportStudentFilters.search || '')}" aria-label="Tìm học sinh theo tên hoặc mã" placeholder="Tìm theo tên hoặc mã học sinh..." onchange="state.reportStudentFilters.search=this.value.trim();renderLayout()" class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400">
+            <div class="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-4 print:hidden">
+                <input type="search" value="${escapeHtmlAttr(reportStudentFilters.search || '')}" aria-label="Tìm học sinh theo tên hoặc mã" placeholder="Tìm theo tên hoặc mã học sinh..." oninput="state.reportStudentFilters.search=this.value.trim()" onkeydown="if(event.key==='Enter'){event.preventDefault();renderLayout()}" class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400">
                 <select aria-label="Lọc báo cáo theo tổ" onchange="state.reportStudentFilters.group=this.value;renderLayout()" class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
                     <option value="">Tất cả các tổ</option>
                     ${reportGroups.map(group => `<option value="${escapeHtmlAttr(group)}" ${reportStudentFilters.group === group ? 'selected' : ''}>${escapeHtmlText(group)}</option>`).join('')}
@@ -4343,7 +4452,8 @@ function renderViewBaoCao() {
                     <option value="">Tất cả chức vụ</option>
                     ${reportRoles.map(role => `<option value="${escapeHtmlAttr(role)}" ${reportStudentFilters.role === role ? 'selected' : ''}>${escapeHtmlText(role)}</option>`).join('')}
                 </select>
-                <div class="text-xs font-semibold text-slate-500 md:col-span-3">Đang hiển thị ${sortedStudents.length} / ${totalStudents} học sinh trong các bảng kết quả.</div>
+                <button type="button" onclick="renderLayout()" class="rounded-xl bg-indigo-700 px-4 py-3 text-sm font-black text-white hover:bg-indigo-800"><i class="ph-bold ph-funnel mr-1"></i> Lọc</button>
+                <div class="text-xs font-semibold text-slate-500 md:col-span-4">Đang hiển thị ${sortedStudents.length} / ${totalStudents} học sinh trong các bảng kết quả.</div>
             </div>
             
             <!-- REDESIGN: 4 Thẻ Thống kê -->
@@ -4367,10 +4477,12 @@ function renderViewBaoCao() {
                     <i class="ph-fill ph-chart-line-up text-5xl absolute right-4 bottom-4 text-white/20 group-hover:text-white/30 transition-colors"></i>
                 </div>
                 <div class="bg-white border-2 border-slate-100 rounded-[2rem] p-6 shadow-sm relative overflow-hidden group hover:-translate-y-1 transition-transform hover:border-blue-200">
-                    <div class="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">Điểm danh (${formattedDate})</div>
-                    <div class="flex gap-4 mt-3">
-                        <div class="text-sm font-bold text-slate-700">Có mặt: <span class="text-emerald-500 font-black text-lg">${present}</span></div>
-                        <div class="text-sm font-bold text-slate-700">Vắng: <span class="text-red-500 font-black text-lg">${absent}</span></div>
+                    <label class="block text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">Điểm danh
+                        <input type="date" value="${escapeHtmlAttr(reportAttendanceDate)}" onchange="window.reportAttendanceDate=this.value||'${todayStr}';renderLayout()" aria-label="Chọn ngày thống kê điểm danh" class="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-700">
+                    </label>
+                    <div class="flex flex-wrap gap-3 mt-3">
+                        <button type="button" onclick="openReportAttendanceDetails('present')" class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:bg-emerald-100" title="Xem danh sách học sinh có mặt">Có mặt: <span class="text-emerald-700 font-black text-lg">${present}</span><span class="ml-1 text-[10px] font-black uppercase text-emerald-800">Xem</span></button>
+                        <button type="button" onclick="openReportAttendanceDetails('absent')" class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:bg-red-100" title="Xem danh sách học sinh vắng">Vắng: <span class="text-red-700 font-black text-lg">${absent}</span><span class="ml-1 text-[10px] font-black uppercase text-red-800">Xem</span></button>
                     </div>
                     <i class="ph-fill ph-calendar-check text-5xl absolute right-4 bottom-4 text-slate-100 group-hover:text-blue-50 transition-colors"></i>
                 </div>
@@ -6616,6 +6728,18 @@ window.playBellSound = function(idx = 0) {
             ) || null;
         }
 
+        function getTimetableScheduleForEdit() {
+            const selectedHistory = getSelectedPublishedTimetableHistory();
+            if (!selectedHistory) return state.dailySchedule;
+            const edit = state.timetableHistoryEdit;
+            return edit && edit.id === selectedHistory.id ? edit.schedule : null;
+        }
+
+        function isEditingPublishedTimetable() {
+            const selectedHistory = getSelectedPublishedTimetableHistory();
+            return !!(selectedHistory && state.timetableHistoryEdit && state.timetableHistoryEdit.id === selectedHistory.id);
+        }
+
         window.publishTimetable = function() {
             if (!state.auth || state.auth.role !== 'gvcn') {
                 showToast('Chỉ GVCN mới được công bố thời khóa biểu.', 'error');
@@ -6655,6 +6779,7 @@ window.playBellSound = function(idx = 0) {
             }
             if (!confirm('Xóa vĩnh viễn phiên bản thời khóa biểu đã công bố này?')) return;
             state.timetableHistory = (state.timetableHistory || []).filter(entry => entry.id !== publishedEntry.id);
+            delete state.timetableHistoryEdit;
             state.selectedTimetableHistoryId = '';
             saveData();
             renderLayout();
@@ -6673,14 +6798,37 @@ window.playBellSound = function(idx = 0) {
                 showToast('Không tìm thấy thời khóa biểu đã công bố cần chỉnh sửa.', 'error');
                 return;
             }
-            if (!confirm('Chép bản đã công bố này thành thời khóa biểu nháp hiện tại? Bản lịch sử gốc sẽ được giữ nguyên.')) return;
-            state.dailySchedule = JSON.parse(JSON.stringify(publishedEntry.schedule || {}));
-            if (!state.timetable) state.timetable = {};
-            state.timetable.effectiveDate = publishedEntry.effectiveDate || state.timetable.effectiveDate;
-            state.selectedTimetableHistoryId = '';
+            state.timetableHistoryEdit = {
+                id: publishedEntry.id,
+                schedule: JSON.parse(JSON.stringify(publishedEntry.schedule || {})),
+                effectiveDate: publishedEntry.effectiveDate || '',
+            };
+            renderLayout();
+            showToast('Đang sửa bản lịch sử. Nhấn “Lưu sửa đổi” để cập nhật phiên bản này.', 'success');
+        };
+
+        window.saveTimetableHistoryEdit = function() {
+            if (!state.auth || state.auth.role !== 'gvcn' || !isEditingPublishedTimetable()) {
+                showToast('Không tìm thấy phiên bản thời khóa biểu đang sửa.', 'error');
+                return;
+            }
+            const entry = getSelectedPublishedTimetableHistory();
+            if (!entry) return showToast('Không tìm thấy phiên bản cần cập nhật.', 'error');
+            if (!state.timetableHistoryEdit.effectiveDate) return showToast('Vui lòng chọn ngày áp dụng.', 'error');
+            entry.schedule = JSON.parse(JSON.stringify(state.timetableHistoryEdit.schedule || {}));
+            entry.effectiveDate = state.timetableHistoryEdit.effectiveDate;
+            entry.changedAt = new Date().toISOString();
+            delete state.timetableHistoryEdit;
             saveData();
             renderLayout();
-            showToast('Đã chép thời khóa biểu vào bản nháp; bản đã công bố vẫn được giữ nguyên.', 'success');
+            showToast('Đã lưu thay đổi vào đúng phiên bản thời khóa biểu đã chọn.', 'success');
+        };
+
+        window.cancelTimetableHistoryEdit = function() {
+            if (!isEditingPublishedTimetable()) return;
+            delete state.timetableHistoryEdit;
+            renderLayout();
+            showToast('Đã hủy các thay đổi chưa lưu.', 'success');
         };
 
         function getTimetableRows(session, schedule = state.dailySchedule) {
@@ -6719,7 +6867,7 @@ window.playBellSound = function(idx = 0) {
             }));
         }
 
-        function renderTimetableSession(session, accentClass, schedule = state.dailySchedule, canEdit = !!(state.auth && state.auth.role === 'gvcn'), reminderWeek = '') {
+        function renderTimetableSession(session, accentClass, schedule = state.dailySchedule, canEdit = !!(state.auth && state.auth.role === 'gvcn'), reminderWeek = '', canAddReminder = false) {
             const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
             const dayRows = getTimetableRows(session, schedule);
             const rowCount = dayRows[0].length;
@@ -6746,6 +6894,8 @@ window.playBellSound = function(idx = 0) {
                                 ${slotReminders.length ? `<span class="mt-1 block text-[10px] font-black text-amber-700">${slotReminders.length} lời nhắc</span>` : `<span class="mt-1 block text-[10px] font-medium text-slate-400">${canEdit ? 'Bấm để sửa môn học' : ''}</span>`}
                             </button>
                             ${canEdit ? `<button type="button" onclick="editTimetableSubject(${dayIndex + 1}, '${session}', ${rowIndex}, '${escapeInlineJs(entry.subject || '')}')" class="mt-1 w-full rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100"><i class="ph-bold ph-pencil-simple"></i> Sửa môn</button>` : ''}
+                            ${slotReminders.length ? `<button type="button" onclick="openTimetableReminderModal(${dayIndex + 1}, '${session}', ${rowIndex}, '${reminderWeek}', '${escapeInlineJs(entry.subject || '')}', '${escapeInlineJs(entry.period || rowTemplate[rowIndex].period || '')}', '${escapeInlineJs(entry.time || rowTemplate[rowIndex].time || '')}')" class="mt-1 w-full rounded-md bg-amber-50 px-2 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"><i class="ph-bold ph-eye mr-1"></i> Xem lời nhắc (${slotReminders.length})</button>` : ''}
+                            ${canAddReminder && String(entry.subject || '').trim() ? `<button type="button" onclick="openTimetableReminderModal(${dayIndex + 1}, '${session}', ${rowIndex}, '${reminderWeek}', '${escapeInlineJs(entry.subject || '')}', '${escapeInlineJs(entry.period || rowTemplate[rowIndex].period || '')}', '${escapeInlineJs(entry.time || rowTemplate[rowIndex].time || '')}')" class="mt-1 w-full rounded-md bg-amber-600 px-2 py-1.5 text-[10px] font-black text-white hover:bg-amber-700"><i class="ph-bold ph-bell-ringing mr-1"></i> Thêm lời nhắc</button>` : ''}
                         </td>`;
                     }).join('')}
                 </tr>
@@ -6884,9 +7034,16 @@ window.playBellSound = function(idx = 0) {
             if (!state.timetable.effectiveDate) state.timetable.effectiveDate = todayString;
             const selectedHistory = getSelectedPublishedTimetableHistory();
             if (state.selectedTimetableHistoryId && !selectedHistory) state.selectedTimetableHistoryId = '';
-            const displayedSchedule = selectedHistory ? selectedHistory.schedule : state.dailySchedule;
-            const displayedEffectiveDate = selectedHistory ? selectedHistory.effectiveDate : state.timetable.effectiveDate;
-            const canEdit = !!(state.auth && state.auth.role === 'gvcn' && !selectedHistory);
+            const editingHistory = isEditingPublishedTimetable();
+            const canEditCurrent = !!(state.auth && state.auth.role === 'gvcn' && !selectedHistory);
+            const canEdit = canEditCurrent || editingHistory;
+            const canAddReminder = canSendTimetableReminder() && !selectedHistory && !editingHistory;
+            const displayedSchedule = editingHistory
+                ? state.timetableHistoryEdit.schedule
+                : selectedHistory ? selectedHistory.schedule : state.dailySchedule;
+            const displayedEffectiveDate = editingHistory
+                ? state.timetableHistoryEdit.effectiveDate
+                : selectedHistory ? selectedHistory.effectiveDate : state.timetable.effectiveDate;
             const currentWeek = getTimetableWeekStart(new Date());
             const reminderWeek = getTimetableWeekStart(state.timetableReminderWeek || currentWeek);
             state.timetableReminderWeek = reminderWeek;
@@ -6915,11 +7072,11 @@ window.playBellSound = function(idx = 0) {
                             <div>${escapeTimetableText(formatTimetableDate(getTimetableReminderDate(reminderWeek, entry)))}</div>
                             <div>${escapeTimetableText(entry.time || '--:--')}</div>
                             ${createdAtLabel ? `<div class="mt-1 border-t border-amber-200 pt-1 text-slate-500">Đã nhắc<br>${escapeTimetableText(createdAtLabel)}</div>` : ''}
-                            ${canEdit ? `<div class="mt-2 flex flex-wrap justify-end gap-1">${entry.storage === 'server' ? '' : `<button type="button" onclick="editTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm hover:bg-amber-100">Sửa</button>`}<button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-rose-700 shadow-sm hover:bg-rose-50">Xóa</button></div>` : ''}
+                            ${canEditCurrent ? `<div class="mt-2 flex flex-wrap justify-end gap-1">${entry.storage === 'server' ? '' : `<button type="button" onclick="editTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm hover:bg-amber-100">Sửa</button>`}<button type="button" onclick="deleteTimetableReminder('${escapeInlineJs(reminderWeek)}','${escapeInlineJs(entry.id)}')" class="rounded-md bg-white px-2 py-1 text-[10px] font-black text-rose-700 shadow-sm hover:bg-rose-50">Xóa</button></div>` : ''}
                         </div>
                     </article>
                 `}).join('')
-                : `<div class="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-center text-xs font-semibold text-slate-500">${canEdit ? 'Bấm “Thêm lời nhắc” ở ô môn học để mở khung nhập lớn. Nhấn Enter để lưu, Shift+Enter để xuống dòng.' : 'Tuần này chưa có lời nhắc nào.'}</div>`;
+                : `<div class="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-center text-xs font-semibold text-slate-500">${canEditCurrent ? 'Bấm “Thêm lời nhắc” ở ô môn học để mở khung nhập lớn. Nhấn Enter để lưu, Shift+Enter để xuống dòng.' : 'Tuần này chưa có lời nhắc nào.'}</div>`;
             const historyOptions = state.timetableHistory.filter(entry => entry.published === true).slice().reverse().map(entry => {
                 const effectiveDate = entry.effectiveDate
                     ? new Date(`${entry.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN')
@@ -6942,10 +7099,11 @@ window.playBellSound = function(idx = 0) {
                                 <div class="flex flex-wrap items-center justify-end gap-2">
                                     <img src="${escapeTimetableText(state.theme && state.theme.schoolLogo ? state.theme.schoolLogo : './logo.png')}" alt="Logo trường THPT Quang Trung" class="h-20 w-24 rounded-xl bg-white object-contain p-1 shadow-sm border border-sky-100">
                                     <button onclick="downloadTimetablePdf()" class="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-800"><i class="ph-bold ph-download-simple"></i> Tải TKB PDF</button>
-                                    ${canEdit ? `<button type="button" onclick="publishTimetable()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-rose-700"><i class="ph-bold ph-megaphone"></i> Xác nhận công khai</button>` : ''}
-                                    ${selectedHistory && state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="editTimetableHistoryAsDraft()" class="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-amber-700"><i class="ph-bold ph-pencil-simple"></i> Sửa bản này</button>` : ''}
-                                    ${selectedHistory && state.auth && state.auth.role === 'gvcn' ? `<button type="button" onclick="deleteTimetableHistory()" class="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-red-800"><i class="ph-bold ph-trash"></i> Xóa bản này</button>` : ''}
-                                    ${canEdit ? `<label class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"><i class="ph-bold ph-upload-simple"></i> Tải file TKB<input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleTimetableExcelUpload(event)"></label>` : ''}
+                                    ${canEditCurrent ? `<button type="button" onclick="publishTimetable()" class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-rose-700"><i class="ph-bold ph-megaphone"></i> Xác nhận công khai</button>` : ''}
+                                    ${selectedHistory && state.auth && state.auth.role === 'gvcn' && !editingHistory ? `<button type="button" onclick="editTimetableHistoryAsDraft()" class="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-amber-700"><i class="ph-bold ph-pencil-simple"></i> Sửa bản này</button>` : ''}
+                                    ${editingHistory ? `<button type="button" onclick="saveTimetableHistoryEdit()" class="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-800"><i class="ph-bold ph-floppy-disk"></i> Lưu sửa đổi</button><button type="button" onclick="cancelTimetableHistoryEdit()" class="inline-flex items-center gap-2 rounded-xl bg-slate-600 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-slate-700">Hủy sửa</button>` : ''}
+                                    ${selectedHistory && state.auth && state.auth.role === 'gvcn' && !editingHistory ? `<button type="button" onclick="deleteTimetableHistory()" class="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-red-800"><i class="ph-bold ph-trash"></i> Xóa bản này</button>` : ''}
+                                    ${canEditCurrent ? `<label class="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-indigo-700 px-4 py-2.5 text-sm font-black text-white shadow hover:bg-indigo-800"><i class="ph-bold ph-upload-simple"></i> Tải file TKB<input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleTimetableExcelUpload(event)"></label>` : ''}
                                 </div>
                             </div>
                             <h2 class="text-3xl md:text-5xl font-black uppercase tracking-tight text-blue-700 drop-shadow-sm">Thời khóa biểu</h2>
@@ -6953,18 +7111,18 @@ window.playBellSound = function(idx = 0) {
                             <div class="mt-2 font-black text-indigo-900">NĂM HỌC ${today.getFullYear()} - ${today.getFullYear() + 1}</div>
                             <div class="mx-auto mt-4 max-w-2xl text-left">
                                 <label for="timetable-history-select" class="mb-1 block text-xs font-black uppercase tracking-wide text-indigo-800">Lịch sử thời khóa biểu</label>
-                                <select id="timetable-history-select" onchange="selectTimetableHistory(this.value)" class="w-full rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">
+                                <select id="timetable-history-select" onchange="selectTimetableHistory(this.value)" ${editingHistory ? 'disabled' : ''} class="w-full rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm disabled:opacity-60">
                                     <option value="">Thời khóa biểu hiện tại</option>
                                     ${historyOptions}
                                 </select>
-                                ${selectedHistory ? `<p class="mt-2 text-center text-xs font-bold text-amber-700">Bản TKB này áp dụng từ ${escapeTimetableText(selectedHistory.effectiveDate ? new Date(`${selectedHistory.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN') : 'chưa đặt')}. GVCN có thể sửa bản nháp hoặc xóa phiên bản đã công bố.</p>` : `<p class="mt-2 text-center text-xs font-semibold text-slate-500">Các lần chỉnh sửa chỉ lưu bản nháp; nhấn “Công bố TKB” để lưu phiên bản vào lịch sử. Công bố không khóa quyền sửa thời khóa biểu hiện tại.</p>`}
+                                ${selectedHistory ? `<p class="mt-2 text-center text-xs font-bold text-amber-700">${editingHistory ? 'Đang sửa bản đã công bố; thay đổi chỉ được ghi khi nhấn “Lưu sửa đổi”.' : `Bản TKB này áp dụng từ ${escapeTimetableText(selectedHistory.effectiveDate ? new Date(`${selectedHistory.effectiveDate}T00:00:00`).toLocaleDateString('vi-VN') : 'chưa đặt')}. Chọn “Sửa bản này” để chỉnh trực tiếp phiên bản này.`}</p>` : `<p class="mt-2 text-center text-xs font-semibold text-slate-500">Các lần chỉnh sửa chỉ lưu bản nháp; nhấn “Công bố TKB” để lưu phiên bản vào lịch sử. Công bố không khóa quyền sửa thời khóa biểu hiện tại.</p>`}
                             </div>
                         </div>
                         <div class="relative z-10 mt-6 space-y-5">
                             <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
                                 <div class="min-w-0 space-y-5">
-                                    ${renderTimetableSession('Sáng', 'bg-sky-100', displayedSchedule, canEdit, reminderWeek)}
-                                    ${renderTimetableSession('Chiều', 'bg-indigo-100', displayedSchedule, canEdit, reminderWeek)}
+                                    ${renderTimetableSession('Sáng', 'bg-sky-100', displayedSchedule, canEdit, reminderWeek, canAddReminder)}
+                                    ${renderTimetableSession('Chiều', 'bg-indigo-100', displayedSchedule, canEdit, reminderWeek, canAddReminder)}
                                 </div>
                                 <aside class="rounded-2xl border border-amber-200 bg-gradient-to-b from-amber-50 to-white p-4 shadow-sm">
                                     <h3 class="mb-3 flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800"><i class="ph-fill ph-sparkle text-amber-500 text-lg"></i> Việc cần nhớ trong tuần</h3>
@@ -6981,12 +7139,14 @@ window.playBellSound = function(idx = 0) {
                         </div>
                         <div class="relative z-10 mt-5 rounded-2xl bg-gradient-to-r from-sky-100 to-blue-100 p-3 text-center font-black italic text-indigo-800">Đoàn kết - Nỗ lực - Thành công</div>
                     </div>
-                    ${canEdit ? '<p class="mt-3 text-center text-xs font-semibold text-slate-500">Có thể sửa trực tiếp tên tiết, giờ, môn học và nhập lời nhắc dưới từng môn; tải Excel để tự điền lịch từ Thứ 2 đến Thứ 7 và tự chia buổi Sáng/Chiều. Chỉ khi nhấn “Công bố TKB”, phiên bản mới được thêm vào lịch sử. Tải TKB PDF để lưu hoặc in theo mẫu có logo trường.</p>' : ''}
+                    ${editingHistory ? '<p class="mt-3 text-center text-xs font-semibold text-amber-800">Sửa trực tiếp tên tiết, giờ và môn học của bản đã công bố; nhấn “Lưu sửa đổi” để cập nhật bản này hoặc “Hủy sửa” để bỏ thay đổi.</p>' : canEditCurrent ? '<p class="mt-3 text-center text-xs font-semibold text-slate-500">Có thể sửa trực tiếp tên tiết, giờ, môn học và nhập lời nhắc dưới từng môn; tải Excel để tự điền lịch từ Thứ 2 đến Thứ 7 và tự chia buổi Sáng/Chiều. Chỉ khi nhấn “Công bố TKB”, phiên bản mới được thêm vào lịch sử. Tải TKB PDF để lưu hoặc in theo mẫu có logo trường.</p>' : ''}
                 </div>
             `;
         }
 
         window.selectTimetableHistory = function(id) {
+            if (isEditingPublishedTimetable() && id !== state.selectedTimetableHistoryId) return;
+            if (id !== state.selectedTimetableHistoryId) delete state.timetableHistoryEdit;
             state.selectedTimetableHistoryId = id || '';
             renderLayout();
         };
@@ -7293,8 +7453,12 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableEffectiveDate = function(value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
             if (!value) return showToast('Ngày áp dụng không hợp lệ.', 'error');
+            if (isEditingPublishedTimetable()) {
+                state.timetableHistoryEdit.effectiveDate = value;
+                return;
+            }
+            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy nhấn “Sửa bản này” trước khi chỉnh sửa thời khóa biểu cũ.', 'error');
             if (value === state.timetable.effectiveDate) return;
             state.timetable.effectiveDate = value;
             saveData();
@@ -7302,23 +7466,24 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableSubject = function(day, session, rowIndex, value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            const schedule = getTimetableScheduleForEdit();
+            if (!schedule) return showToast('Hãy nhấn “Sửa bản này” trước khi chỉnh sửa thời khóa biểu cũ.', 'error');
             const subject = value.trim();
-            if (getTimetableRows(session)[day - 1][rowIndex].subject === subject) return;
-            if (!state.dailySchedule) state.dailySchedule = {};
-            if (!Array.isArray(state.dailySchedule[day])) state.dailySchedule[day] = [];
-            const entries = state.dailySchedule[day].filter(entry => {
+            if (getTimetableRows(session, schedule)[day - 1][rowIndex].subject === subject) return;
+            if (!schedule[day]) schedule[day] = [];
+            if (!Array.isArray(schedule[day])) schedule[day] = [];
+            const entries = schedule[day].filter(entry => {
                 const hour = Number(String(entry.time || '').match(/(\d{1,2})(?::|h)/i)?.[1]);
                 return (entry.session || (hour >= 12 ? 'Chiều' : 'Sáng')) === session;
             });
-            const templates = getTimetableRows(session)[day - 1];
+            const templates = getTimetableRows(session, schedule)[day - 1];
             while (entries.length <= rowIndex) {
                 const entry = { ...templates[entries.length], session, subject: '', teacher: '' };
-                state.dailySchedule[day].push(entry);
+                schedule[day].push(entry);
                 entries.push(entry);
             }
             entries[rowIndex].subject = subject;
-            saveData();
+            if (!isEditingPublishedTimetable()) saveData();
         };
 
         window.editTimetableSubject = function(day, session, rowIndex, currentSubject) {
@@ -7331,49 +7496,49 @@ window.playBellSound = function(idx = 0) {
 
         window.updateTimetableSlotMeta = function(session, rowIndex, field, value) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
+            const schedule = getTimetableScheduleForEdit();
+            if (!schedule) return showToast('Hãy nhấn “Sửa bản này” trước khi chỉnh sửa thời khóa biểu cũ.', 'error');
             if (!['period', 'time'].includes(field)) return showToast('Trường thời khóa biểu không hợp lệ.', 'error');
             const metaValue = value.trim();
-            const hasChanges = getTimetableRows(session).some(dayRows => dayRows[rowIndex][field] !== metaValue);
+            const hasChanges = getTimetableRows(session, schedule).some(dayRows => dayRows[rowIndex][field] !== metaValue);
             if (!hasChanges) return;
-            if (!state.dailySchedule) state.dailySchedule = {};
             for (let day = 1; day <= 6; day++) {
-                if (!Array.isArray(state.dailySchedule[day])) state.dailySchedule[day] = [];
-                const entries = state.dailySchedule[day].filter(entry => {
+                if (!Array.isArray(schedule[day])) schedule[day] = [];
+                const entries = schedule[day].filter(entry => {
                     const hour = Number(String(entry.time || '').match(/(\d{1,2})(?::|h)/i)?.[1]);
                     return (entry.session || (hour >= 12 ? 'Chiều' : 'Sáng')) === session;
                 });
-                const templates = getTimetableRows(session)[day - 1];
+                const templates = getTimetableRows(session, schedule)[day - 1];
                 while (entries.length <= rowIndex) {
                     const entry = { ...templates[entries.length], session, subject: '', teacher: '', reminder: '' };
-                    state.dailySchedule[day].push(entry);
+                    schedule[day].push(entry);
                     entries.push(entry);
                 }
                 entries[rowIndex][field] = metaValue;
             }
-            saveData();
+            if (!isEditingPublishedTimetable()) saveData();
             renderLayout();
         };
 
         window.addTimetableSlot = function(session) {
             if (!state.auth || state.auth.role !== 'gvcn') return showToast('Chỉ GVCN mới được chỉnh sửa thời khóa biểu.', 'error');
-            if (getSelectedPublishedTimetableHistory()) return showToast('Hãy chuyển về thời khóa biểu hiện tại trước khi chỉnh sửa.', 'error');
-            if (!state.dailySchedule) state.dailySchedule = {};
+            const schedule = getTimetableScheduleForEdit();
+            if (!schedule) return showToast('Hãy nhấn “Sửa bản này” trước khi chỉnh sửa thời khóa biểu cũ.', 'error');
             for (let day = 1; day <= 6; day++) {
-                if (!Array.isArray(state.dailySchedule[day])) state.dailySchedule[day] = [];
-                const slots = state.dailySchedule[day].filter(entry => {
+                if (!Array.isArray(schedule[day])) schedule[day] = [];
+                const slots = schedule[day].filter(entry => {
                     const hour = Number(String(entry.time || '').match(/(\d{1,2})(?::|h)/i)?.[1]);
                     return (entry.session || (hour >= 12 ? 'Chiều' : 'Sáng')) === session;
                 });
                 if (!slots.length) {
-                    getTimetableRows(session)[day - 1].forEach(entry => {
+                    getTimetableRows(session, schedule)[day - 1].forEach(entry => {
                         const defaultEntry = { ...entry, session, subject: '', teacher: '' };
-                        state.dailySchedule[day].push(defaultEntry);
+                        schedule[day].push(defaultEntry);
                         slots.push(defaultEntry);
                     });
                 }
                 const period = slots.length + 1;
-                state.dailySchedule[day].push({
+                schedule[day].push({
                     period: `Tiết ${period}`,
                     time: '--:--',
                     session,
@@ -7382,7 +7547,7 @@ window.playBellSound = function(idx = 0) {
                     reminder: ''
                 });
             }
-            saveData();
+            if (!isEditingPublishedTimetable()) saveData();
             renderLayout();
         };
 
@@ -7676,6 +7841,44 @@ window.parseExcelToDailySchedule = function(rows) {
                 closeAllStudentMenus();
             }
         });
+
+        window.openBcsDeductionModal = function(studentId) {
+            const student = state.students.find(item => String(item.id) === String(studentId));
+            if (!state.auth || state.auth.role !== 'bcs' || !student || !canBcsManageStudent(student)) {
+                return showToast('Bạn không có quyền trừ điểm học sinh này.', 'error');
+            }
+            document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" id="bcs-deduction-modal">
+                    <form class="w-full max-w-md space-y-5 rounded-3xl bg-white p-6 shadow-2xl" onsubmit="submitBcsDeduction(event, '${escapeInlineJs(student.id)}')">
+                        <div>
+                            <h3 class="text-xl font-black text-slate-800">Trừ điểm thành viên</h3>
+                            <p class="mt-1 text-sm font-semibold text-slate-500">${escapeHtmlText(getStudentDisplayName(student))} · ${escapeHtmlText(student.group || '')}</p>
+                        </div>
+                        <label class="block text-sm font-bold text-slate-700">Số điểm cần trừ
+                            <input id="bcs-deduction-points" type="number" min="1" max="500" step="1" required class="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-red-500">
+                        </label>
+                        <label class="block text-sm font-bold text-slate-700">Lý do
+                            <textarea id="bcs-deduction-reason" required minlength="2" maxlength="300" rows="3" class="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-red-500"></textarea>
+                        </label>
+                        <div class="flex gap-3">
+                            <button type="button" onclick="closeModal('bcs-deduction-modal')" class="flex-1 rounded-xl bg-slate-100 py-3 font-bold text-slate-700">Hủy</button>
+                            <button type="submit" class="flex-1 rounded-xl bg-red-700 py-3 font-black text-white">Xác nhận trừ</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+        };
+
+        window.submitBcsDeduction = async function(event, studentId) {
+            event.preventDefault();
+            const points = Number(document.getElementById('bcs-deduction-points').value);
+            const reason = document.getElementById('bcs-deduction-reason').value.trim();
+            if (!Number.isInteger(points) || points < 1 || points > 500 || reason.length < 2) {
+                return showToast('Số điểm phải từ 1 đến 500 và lý do cần ít nhất 2 ký tự.', 'error');
+            }
+            const saved = await executeQuickPoint(studentId, points, reason, 'Kỷ luật', 'subtract');
+            if (saved) closeModal('bcs-deduction-modal');
+        };
 
         window.openPointReasonModal = function(studentId, points, category, type) {
             const student = state.students.find(item => String(item.id) === String(studentId));
@@ -9094,6 +9297,7 @@ window.parseExcelToDailySchedule = function(rows) {
             delete snapshot.pendingAttendanceImport;
             delete snapshot.attendanceImportPending;
             delete snapshot.classReminders;
+            delete snapshot.timetableHistoryEdit;
             delete snapshot._legacyBackupPending;
             delete snapshot.cloudBackupPending;
             delete snapshot.cloudMigrationPerformed;

@@ -50,13 +50,93 @@ async function handleCreate(config, body, classId) {
     byte.toString(16).padStart(2, "0")
   ).join("");
   const email = `u.${localPart}@accounts.example.com`;
+  const classDataUrl = new URL(`${config.url}/rest/v1/class_data`);
+  classDataUrl.searchParams.set("class_id", `eq.${classId}`);
+  classDataUrl.searchParams.set("select", "state");
+  const classResponse = await fetch(classDataUrl, {
+    headers: supabaseHeaders(config.serviceKey),
+  });
+  const classRows = await readJson(classResponse);
+  if (!classResponse.ok) {
+    throw supabaseRequestError(classResponse, classRows, "Không thể tải dữ liệu lớp.");
+  }
+  const classState = Array.isArray(classRows) && classRows[0] ? classRows[0].state : null;
+  const linkedStudent = classState && Array.isArray(classState.students)
+    ? classState.students.find(student => String(student.id) === studentId)
+    : null;
+  if (!linkedStudent) throw new Error("Không tìm thấy học sinh liên kết trong dữ liệu lớp.");
+  if (role === "bcs" && studentRole === "Tổ trưởng" && !String(linkedStudent.group || "").trim()) {
+    throw new Error("Hãy phân học sinh vào một tổ trước khi cấp tài khoản tổ trưởng.");
+  }
+
+  const existingProfileUrl = new URL(`${config.url}/rest/v1/profiles`);
+  existingProfileUrl.searchParams.set("student_id", `eq.${studentId}`);
+  existingProfileUrl.searchParams.set("class_id", `eq.${classId}`);
+  existingProfileUrl.searchParams.set("select", "id,username");
+  const existingProfileResponse = await fetch(existingProfileUrl, {
+    headers: supabaseHeaders(config.serviceKey),
+  });
+  const existingProfiles = await readJson(existingProfileResponse);
+  if (!existingProfileResponse.ok) {
+    throw supabaseRequestError(existingProfileResponse, existingProfiles, "Không thể kiểm tra tài khoản đã liên kết.");
+  }
+  if (Array.isArray(existingProfiles) && existingProfiles.length) {
+    throw new Error(`Học sinh này đã có tài khoản (${existingProfiles[0].username}). Hãy xóa tài khoản cũ trước.`);
+  }
+
   const createResponse = await fetch(`${config.url}/auth/v1/admin/users`, {
     method: "POST",
     headers: supabaseHeaders(config.serviceKey),
     body: JSON.stringify({ email, password, email_confirm: true }),
   });
-  const user = await readJson(createResponse);
-  if (!createResponse.ok) throw supabaseRequestError(createResponse, user, "Không thể tạo tài khoản xác thực.");
+  let user = await readJson(createResponse);
+  let createdAuthUser = createResponse.ok;
+  if (!createResponse.ok) {
+    const message = String(supabaseErrorMessage(user, ""));
+    const code = String(user && user.code || "");
+    if (!["email_exists", "user_already_exists"].includes(code) && !/already registered|already been registered/i.test(message)) {
+      throw supabaseRequestError(createResponse, user, "Không thể tạo tài khoản xác thực.");
+    }
+
+    const usersUrl = new URL(`${config.url}/auth/v1/admin/users`);
+    usersUrl.searchParams.set("filter", email);
+    usersUrl.searchParams.set("page", "1");
+    usersUrl.searchParams.set("per_page", "1000");
+    const usersResponse = await fetch(usersUrl, { headers: supabaseHeaders(config.serviceKey) });
+    const usersResult = await readJson(usersResponse);
+    const authUsers = Array.isArray(usersResult) ? usersResult : usersResult && usersResult.users;
+    if (!usersResponse.ok) {
+      throw supabaseRequestError(usersResponse, usersResult, "Không thể xác minh tài khoản Auth đã tồn tại.");
+    }
+    user = Array.isArray(authUsers)
+      ? authUsers.find(candidate => String(candidate.email || "").toLowerCase() === email)
+      : null;
+    if (!user || !user.id) {
+      throw supabaseRequestError(createResponse, user, "Email đăng nhập đã tồn tại nhưng không xác minh được tài khoản.");
+    }
+
+    const profileByIdUrl = new URL(`${config.url}/rest/v1/profiles`);
+    profileByIdUrl.searchParams.set("id", `eq.${user.id}`);
+    profileByIdUrl.searchParams.set("select", "id,username,class_id");
+    const profileByIdResponse = await fetch(profileByIdUrl, { headers: supabaseHeaders(config.serviceKey) });
+    const profilesById = await readJson(profileByIdResponse);
+    if (!profileByIdResponse.ok) {
+      throw supabaseRequestError(profileByIdResponse, profilesById, "Không thể xác minh hồ sơ Auth đã tồn tại.");
+    }
+    if (Array.isArray(profilesById) && profilesById.length) {
+      throw new Error("Tên đăng nhập này đã được liên kết với một hồ sơ. Hãy xóa hoặc sửa tài khoản cũ trước.");
+    }
+
+    const updateResponse = await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+      method: "PUT",
+      headers: supabaseHeaders(config.serviceKey),
+      body: JSON.stringify({ password, email_confirm: true }),
+    });
+    const updatedUser = await readJson(updateResponse);
+    if (!updateResponse.ok) {
+      throw supabaseRequestError(updateResponse, updatedUser, "Không thể khôi phục tài khoản xác thực chưa có hồ sơ.");
+    }
+  }
 
   const profileResponse = await fetch(`${config.url}/rest/v1/profiles`, {
     method: "POST",
@@ -71,40 +151,21 @@ async function handleCreate(config, body, classId) {
     }),
   });
   if (!profileResponse.ok) {
-    await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
-      method: "DELETE",
-      headers: supabaseHeaders(config.serviceKey),
-    });
     const error = await readJson(profileResponse);
+    if (createdAuthUser) {
+      const deleteResponse = await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+        headers: supabaseHeaders(config.serviceKey),
+      });
+      if (!deleteResponse.ok) {
+        const deleteError = await readJson(deleteResponse);
+        throw new Error(`${supabaseErrorMessage(error, "Không thể lưu hồ sơ tài khoản.")} Không thể thu hồi tài khoản Auth tạm thời: ${supabaseErrorMessage(deleteError, "lỗi không xác định")}`);
+      }
+    }
     throw supabaseRequestError(profileResponse, error, "Không thể lưu hồ sơ tài khoản.");
   }
 
   if (role === "bcs" && studentRole) {
-    const classDataUrl = new URL(`${config.url}/rest/v1/class_data`);
-    classDataUrl.searchParams.set("class_id", `eq.${classId}`);
-    classDataUrl.searchParams.set("select", "state");
-    const classResponse = await fetch(classDataUrl, {
-      headers: supabaseHeaders(config.serviceKey),
-    });
-    const classRows = await readJson(classResponse);
-    const classState = Array.isArray(classRows) && classRows[0] ? classRows[0].state : null;
-    const linkedStudent = classState && Array.isArray(classState.students)
-      ? classState.students.find(student => String(student.id) === studentId)
-      : null;
-    if (!classResponse.ok || !linkedStudent) {
-      await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
-        method: "DELETE",
-        headers: supabaseHeaders(config.serviceKey),
-      });
-      throw new Error("Không tìm thấy học sinh liên kết trong dữ liệu lớp.");
-    }
-    if (studentRole === "Tổ trưởng" && !String(linkedStudent.group || "").trim()) {
-      await fetch(`${config.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
-        method: "DELETE",
-        headers: supabaseHeaders(config.serviceKey),
-      });
-      throw new Error("Hãy phân học sinh vào một tổ trước khi cấp tài khoản tổ trưởng.");
-    }
     linkedStudent.role = studentRole;
     const updateResponse = await fetch(
       `${config.url}/rest/v1/class_data?class_id=eq.${encodeURIComponent(classId)}`,
@@ -193,7 +254,7 @@ module.exports = async function handler(request, response) {
       return;
     }
     const targetResponse = await fetch(
-      `${url}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id,role,class_id`,
+      `${url}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id,role,class_id,student_id`,
       { headers: supabaseHeaders(serviceKey) }
     );
     const targets = await readJson(targetResponse);
@@ -221,6 +282,41 @@ module.exports = async function handler(request, response) {
     }
 
     if (action === "delete") {
+      let classState = null;
+      let linkedStudent = null;
+      let previousStudentRole = "";
+      if (target.role === "bcs" && target.student_id) {
+        const classDataUrl = new URL(`${url}/rest/v1/class_data`);
+        classDataUrl.searchParams.set("class_id", `eq.${target.class_id}`);
+        classDataUrl.searchParams.set("select", "state");
+        const classDataResponse = await fetch(classDataUrl, { headers: supabaseHeaders(serviceKey) });
+        const classRows = await readJson(classDataResponse);
+        if (!classDataResponse.ok) {
+          throw supabaseRequestError(classDataResponse, classRows, "Không thể tải dữ liệu lớp trước khi xóa tài khoản.");
+        }
+        classState = Array.isArray(classRows) && classRows[0] ? classRows[0].state : null;
+        linkedStudent = classState && Array.isArray(classState.students)
+          ? classState.students.find(student => String(student.id) === String(target.student_id))
+          : null;
+        const studentRole = String(linkedStudent && linkedStudent.role || "");
+        const normalizedStudentRole = studentRole.toLocaleLowerCase("vi");
+        if (linkedStudent && (normalizedStudentRole.includes("lớp trưởng") || normalizedStudentRole.includes("tổ trưởng"))) {
+          previousStudentRole = linkedStudent.role;
+          linkedStudent.role = "Thành viên";
+          const roleUpdateResponse = await fetch(
+            `${url}/rest/v1/class_data?class_id=eq.${encodeURIComponent(target.class_id)}`,
+            {
+              method: "PATCH",
+              headers: supabaseHeaders(serviceKey, { Prefer: "return=minimal" }),
+              body: JSON.stringify({ state: classState }),
+            }
+          );
+          if (!roleUpdateResponse.ok) {
+            const result = await readJson(roleUpdateResponse);
+            throw supabaseRequestError(roleUpdateResponse, result, "Không thể gỡ vai trò cán bộ lớp trước khi xóa tài khoản.");
+          }
+        }
+      }
       const attendanceUrl = new URL(`${url}/rest/v1/attendance_records`);
       attendanceUrl.searchParams.set("updated_by", `eq.${encodeURIComponent(userId)}`);
       const attendanceResponse = await fetch(attendanceUrl, {
@@ -230,6 +326,21 @@ module.exports = async function handler(request, response) {
       });
       if (!attendanceResponse.ok) {
         const result = await readJson(attendanceResponse);
+        if (linkedStudent && previousStudentRole) {
+          linkedStudent.role = previousStudentRole;
+          const rollbackResponse = await fetch(
+            `${url}/rest/v1/class_data?class_id=eq.${encodeURIComponent(target.class_id)}`,
+            {
+              method: "PATCH",
+              headers: supabaseHeaders(serviceKey, { Prefer: "return=minimal" }),
+              body: JSON.stringify({ state: classState }),
+            }
+          );
+          if (!rollbackResponse.ok) {
+            const rollbackError = await readJson(rollbackResponse);
+            throw new Error(`${supabaseErrorMessage(result, "Không thể gỡ liên kết điểm danh của tài khoản.")} Không thể khôi phục vai trò cán bộ lớp: ${supabaseErrorMessage(rollbackError, "lỗi không xác định")}`);
+          }
+        }
         throw supabaseRequestError(attendanceResponse, result, "Không thể gỡ liên kết điểm danh của tài khoản.");
       }
       const deleteResponse = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
@@ -238,6 +349,21 @@ module.exports = async function handler(request, response) {
       });
       if (!deleteResponse.ok) {
         const result = await readJson(deleteResponse);
+        if (linkedStudent && previousStudentRole) {
+          linkedStudent.role = previousStudentRole;
+          const rollbackResponse = await fetch(
+            `${url}/rest/v1/class_data?class_id=eq.${encodeURIComponent(target.class_id)}`,
+            {
+              method: "PATCH",
+              headers: supabaseHeaders(serviceKey, { Prefer: "return=minimal" }),
+              body: JSON.stringify({ state: classState }),
+            }
+          );
+          if (!rollbackResponse.ok) {
+            const rollbackError = await readJson(rollbackResponse);
+            throw new Error(`${supabaseErrorMessage(result, "Không thể xóa tài khoản.")} Không thể khôi phục vai trò cán bộ lớp: ${supabaseErrorMessage(rollbackError, "lỗi không xác định")}`);
+          }
+        }
         throw supabaseRequestError(deleteResponse, result, "Không thể xóa tài khoản.");
       }
       json(response, 200, { ok: true });
