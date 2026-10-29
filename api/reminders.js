@@ -19,8 +19,8 @@ async function readJson(response) {
 
 module.exports = async function handler(request, response) {
   response.setHeader("Cache-Control", "no-store");
-  if (!["POST", "PUT", "DELETE"].includes(request.method)) {
-    response.setHeader("Allow", "POST, PUT, DELETE");
+  if (!["GET", "POST", "PUT", "DELETE"].includes(request.method)) {
+    response.setHeader("Allow", "GET, POST, PUT, DELETE");
     json(response, 405, { error: "Phương thức không được hỗ trợ." });
     return;
   }
@@ -42,7 +42,7 @@ module.exports = async function handler(request, response) {
   const url = rawUrl.replace(/\/+$/, "");
   const token = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) {
-    json(response, 401, { error: "Cần đăng nhập để gửi lời nhắc." });
+    json(response, 401, { error: "Cần đăng nhập để sử dụng lời nhắc." });
     return;
   }
 
@@ -71,6 +71,27 @@ module.exports = async function handler(request, response) {
     }
     if (!profile) {
       json(response, 403, { error: "Tài khoản chưa có hồ sơ trong lớp." });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const remindersUrl = new URL(`${url}/rest/v1/class_reminders`);
+      remindersUrl.searchParams.set("class_id", `eq.${profile.class_id}`);
+      remindersUrl.searchParams.set("select", "*");
+      remindersUrl.searchParams.set("order", "created_at.desc,id.desc");
+      remindersUrl.searchParams.set("limit", "50");
+      const remindersResponse = await fetch(remindersUrl, { headers: supabaseHeaders(serviceKey) });
+      const reminders = await readJson(remindersResponse);
+      if (!remindersResponse.ok) {
+        throw new Error(getErrorMessage(reminders, "Không thể tải lời nhắc của lớp."));
+      }
+      const visibleReminders = profile.role === "gvcn"
+        ? reminders
+        : (Array.isArray(reminders) ? reminders : []).filter(reminder =>
+          Array.isArray(reminder.recipient_ids) &&
+          reminder.recipient_ids.map(String).includes(String(profile.student_id))
+        );
+      json(response, 200, { reminders: visibleReminders });
       return;
     }
 

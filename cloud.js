@@ -65,11 +65,13 @@
     const response = await fetch("/api/reminders", {
       method,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
+      body: method === "GET" ? undefined : JSON.stringify(payload),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {
-      const fallbackMessage = method === "PUT"
+      const fallbackMessage = method === "GET"
+        ? "Không thể tải lời nhắc."
+        : method === "PUT"
         ? "Không thể sửa lời nhắc."
         : method === "DELETE"
           ? "Không thể xóa lời nhắc."

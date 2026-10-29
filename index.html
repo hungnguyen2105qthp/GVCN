@@ -502,14 +502,11 @@
         }
 
         window.loadClassReminders = async function() {
-            const client = await window.cloudReady;
-            const { data, error } = await client.from('class_reminders')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .order('id', { ascending: false })
-                .limit(50);
-            if (error) throw error;
-            state.classReminders = data || [];
+            const result = await window.cloudReminderRequest({}, 'GET');
+            if (!Array.isArray(result.reminders)) {
+                throw new Error('API lời nhắc trả về danh sách không hợp lệ.');
+            }
+            state.classReminders = result.reminders;
         };
 
         window.startClassReminderSync = function() {
@@ -650,7 +647,6 @@
 
         window.openClassReminderNotifications = function() {
             state.showReminderNotifications = true;
-            markAllNotificationsRead();
             updateClassReminderNotificationControl();
         };
 
@@ -678,6 +674,7 @@
         }
 
         window.closeClassReminderNotifications = function() {
+            markAllNotificationsRead();
             state.showReminderNotifications = false;
             updateClassReminderNotificationControl();
         };
@@ -2859,6 +2856,10 @@ window.executePointsSubmission = function() {
             if (!state.attendanceTab) state.attendanceTab = 'diem-danh';
             if (typeof window.attendanceTopFilter === 'undefined') window.attendanceTopFilter = 'thang'; // Mặc định xem theo tháng
             const attendanceScopeStudents = getAttendanceScopeStudents();
+            const linkedAttendanceRole = String(getBcsLinkedStudent() && getBcsLinkedStudent().role || '').toLocaleLowerCase('vi');
+            const attendanceScopeLabel = state.auth && state.auth.role === 'bcs' && linkedAttendanceRole.includes('tổ trưởng')
+                ? 'Cả tổ'
+                : 'Cả lớp';
             const attendanceSearch = String(window.attendanceSearch || '').trim().toLocaleLowerCase('vi');
             const attendanceGroup = String(window.attendanceGroupFilter || '');
             const attendanceStudents = attendanceScopeStudents.filter(student =>
@@ -2869,7 +2870,7 @@ window.executePointsSubmission = function() {
                 <div class="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_14rem_auto_auto]">
                     <input type="search" value="${escapeHtmlAttr(window.attendanceSearch || '')}" oninput="window.attendanceSearch=this.value.trim()" onkeydown="if(event.key==='Enter'){event.preventDefault();renderLayout()}" placeholder="Tìm theo tên hoặc mã học sinh..." aria-label="Tìm học sinh điểm danh" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-400">
                     <select onchange="window.attendanceGroupFilter=this.value;renderLayout()" aria-label="Lọc học sinh theo tổ" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                        <option value="">Tất cả tổ trong phạm vi</option>
+                        <option value="">${attendanceScopeLabel}</option>
                         ${[...new Set(attendanceScopeStudents.map(student => student.group).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'vi')).map(group => `<option value="${escapeHtmlAttr(group)}" ${attendanceGroup === group ? 'selected' : ''}>${escapeHtmlText(group)}</option>`).join('')}
                     </select>
                     <div class="self-center text-xs font-bold text-slate-500">Hiển thị ${attendanceStudents.length} / ${attendanceScopeStudents.length}</div>
@@ -3040,7 +3041,7 @@ window.executePointsSubmission = function() {
                         let cellContent = '';
                         if (status === 'present') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300 flex items-center justify-center font-black text-xs"><i class="ph-bold ph-check"></i></div>'; presentCount++; }
                         else if (status === 'late') { cellContent = '<div class="w-8 h-8 mx-auto rounded-full bg-amber-100 text-amber-900 ring-1 ring-amber-300 flex items-center justify-center font-black text-xs"><i class="ph-bold ph-clock"></i></div>'; presentCount++; }
-                        else if (status === 'excused') { cellContent = '<div title="Vắng có phép" class="w-8 h-8 mx-auto rounded-full bg-blue-200 text-blue-950 ring-2 ring-blue-400 flex items-center justify-center font-black text-xs">P</div>'; absentCount++; }
+                        else if (status === 'excused') { cellContent = '<div title="Vắng có phép" class="w-8 h-8 mx-auto rounded-full bg-violet-200 text-violet-950 ring-2 ring-violet-500 flex items-center justify-center font-black text-xs">P</div>'; absentCount++; }
                         else if (status === 'unexcused') { cellContent = '<div title="Vắng không phép" class="w-8 h-8 mx-auto rounded-full bg-red-200 text-red-950 ring-2 ring-red-500 flex items-center justify-center font-black text-xs">KP</div>'; absentCount++; }
                         else { cellContent = '<div class="w-8 h-8 mx-auto text-slate-200 flex items-center justify-center">-</div>'; }
                         
@@ -4484,7 +4485,6 @@ function renderViewBaoCao() {
                         <button type="button" onclick="openReportAttendanceDetails('present')" class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:bg-emerald-100" title="Xem danh sách học sinh có mặt">Có mặt: <span class="text-emerald-700 font-black text-lg">${present}</span><span class="ml-1 text-[10px] font-black uppercase text-emerald-800">Xem</span></button>
                         <button type="button" onclick="openReportAttendanceDetails('absent')" class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-sm font-bold text-slate-700 hover:bg-red-100" title="Xem danh sách học sinh vắng">Vắng: <span class="text-red-700 font-black text-lg">${absent}</span><span class="ml-1 text-[10px] font-black uppercase text-red-800">Xem</span></button>
                     </div>
-                    <i class="ph-fill ph-calendar-check text-5xl absolute right-4 bottom-4 text-slate-100 group-hover:text-blue-50 transition-colors"></i>
                 </div>
             </div>
             
