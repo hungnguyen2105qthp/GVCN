@@ -408,12 +408,6 @@
             const eligibleStudents = getReminderEligibleStudents();
             const canSend = role === 'gvcn' || (role === 'bcs' && eligibleStudents.length > 0);
             const reminders = (state.classReminders || []).map(reminder => {
-                const recipientIds = Array.isArray(reminder.recipient_ids) ? reminder.recipient_ids.map(String) : [];
-                const allStudentsIncluded = (state.students || []).length > 0 &&
-                    (state.students || []).every(student => recipientIds.includes(String(student.id)));
-                const recipients = allStudentsIncluded
-                    ? 'Cả lớp'
-                    : recipientIds.map(id => (state.students || []).find(student => String(student.id) === id)?.name).filter(Boolean).join(', ');
                 const date = reminder.created_at
                     ? new Date(reminder.created_at).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })
                     : '';
@@ -424,7 +418,6 @@
                         <span class="ml-auto text-slate-400">${escapeHtmlText(date)}</span>
                     </div>
                     <p class="mt-3 whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-slate-700">${escapeHtmlText(reminder.message || '')}</p>
-                    <div class="mt-3 flex items-center gap-1.5 text-[11px] font-bold text-slate-400"><i class="ph-fill ph-users"></i>${escapeHtmlText(recipients || 'Người nhận')}</div>
                     ${role === 'gvcn' ? `<div class="mt-3 flex flex-wrap gap-2"><button type="button" onclick="editClassReminder('${escapeHtmlAttr(reminder.id)}')" class="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-700 hover:bg-indigo-100"><i class="ph-bold ph-pencil-simple"></i>Sửa lời nhắc</button><button type="button" onclick="deleteClassReminder('${escapeHtmlAttr(reminder.id)}')" class="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-700 hover:bg-rose-100"><i class="ph-bold ph-trash"></i>Xóa lời nhắc</button></div>` : ''}
                 </article>`;
             }).join('');

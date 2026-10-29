@@ -472,7 +472,6 @@
           ? `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`
           : escapeHtmlText(value.toFixed ? value.toFixed(1) : value);
         return `<tr class="hover:bg-teal-50/40">
-          <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${escapeHtmlText(student.name || "Học sinh")}</td>
           <td class="border border-slate-200 bg-emerald-50 px-3 py-3 font-black text-emerald-900">${escapeHtmlText(subject)}</td>
           <td class="border border-slate-200 px-3 py-3 text-center font-black text-slate-700">${formatAverage(hk1Average)}</td>
           <td class="border border-slate-200 px-3 py-3 text-center font-black text-slate-700">${formatAverage(hk2Average)}</td>
@@ -483,7 +482,6 @@
       return `<div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <table class="min-w-[850px] border-collapse text-sm">
           <thead class="bg-sky-700 text-white"><tr>
-            <th class="border border-white/20 px-3 py-3">Họ tên</th>
             <th class="border border-white/20 px-3 py-3">Môn học</th>
             <th class="border border-white/20 px-3 py-3">ĐTB học kỳ 1</th>
             <th class="border border-white/20 px-3 py-3">ĐTB học kỳ 2</th>
@@ -506,7 +504,6 @@
         ? escapeHtmlText(row.reported_average ?? computeAverage(row)) || "—"
         : `<span class="text-xs font-semibold text-slate-400">Chưa công bố</span>`;
       return `<tr class="hover:bg-teal-50/40">
-        <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-bold text-slate-500">${escapeHtmlText(student.name || "Học sinh")}</td>
         <td class="border border-slate-200 bg-emerald-50 px-3 py-3 font-black text-emerald-900">${escapeHtmlText(subject)}</td>
         ${scores}
         <td class="border border-slate-200 bg-slate-50 px-3 py-3 text-center font-black text-teal-800">${average}</td>
@@ -516,7 +513,6 @@
     return `<div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <table class="min-w-[1150px] border-collapse text-sm">
         <thead class="bg-sky-700 text-white"><tr>
-          <th class="border border-white/20 px-3 py-3">Họ tên</th>
           <th class="border border-white/20 px-3 py-3">Môn học</th>
           ${GRADE_COLUMNS.slice(0, 5).map(([, label]) => `<th class="border border-white/20 px-3 py-3">TX ${label}</th>`).join("")}
           <th class="border border-white/20 px-3 py-3">Giữa kỳ</th>
@@ -554,7 +550,7 @@
     };
     const roleHeading = isTeacher()
       ? `BẢNG NHẬP ĐIỂM ${gradeScopeLabel.toLocaleUpperCase("vi")}`
-      : "KẾT QUẢ HỌC TẬP CỦA BẠN";
+      : `KẾT QUẢ HỌC TẬP CỦA ${escapeHtmlText(String(students[0] && students[0].name || "HỌC SINH").toLocaleUpperCase("vi"))}`;
     const subjects = ["Toán", "Ngữ văn", "Tiếng Anh", "Vật lý", "Hóa học", "Sinh học", "Lịch sử", "Địa lý", "Tin học", "Khác"];
     const visibleSubjects = isTeacher()
       ? [context.subject]
